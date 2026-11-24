@@ -5,7 +5,9 @@ import {
   DEMO_WAITLIST_INPUTS,
   buildDemoLibraries,
 } from "@/lib/demo-data";
+import { checkRateLimit } from "@/lib/rate-limit";
 import { fetchMemberLibrariesLive } from "@/lib/steam";
+import { hasSupabaseConfig } from "@/lib/supabase";
 import {
   FamilyMemberInput,
   MemberLibrary,
@@ -16,6 +18,7 @@ import {
 export async function GET() {
   return NextResponse.json({
     hasApiKey: Boolean(process.env.STEAM_API_KEY),
+    hasDatabase: hasSupabaseConfig(),
     regions: Object.values(STEAM_REGIONS),
   });
 }
@@ -38,9 +41,9 @@ export async function POST(req: NextRequest) {
 
     const activeInputs =
       body.members && body.members.length > 0
-        ? body.members
+        ? body.members.slice(0, 6)
         : DEMO_ACTIVE_INPUTS;
-    const waitlistInputs = body.waitlist ?? DEMO_WAITLIST_INPUTS;
+    const waitlistInputs = (body.waitlist ?? DEMO_WAITLIST_INPUTS).slice(0, 10);
 
     let activeLibraries: MemberLibrary[];
     let waitlistLibraries: MemberLibrary[];
@@ -54,6 +57,20 @@ export async function POST(req: NextRequest) {
               "STEAM_API_KEY is not configured on the server. Add it to .env.local or use Demo Mode.",
           },
           { status: 400 }
+        );
+      }
+
+      const ip =
+        req.headers.get("cf-connecting-ip") ??
+        req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ??
+        "local";
+      const rl = checkRateLimit(`live-analyze:${ip}`, 20, 10 * 60 * 1000);
+      if (!rl.allowed) {
+        return NextResponse.json(
+          {
+            error: `Rate limit reached for live Steam lookups. Try again in ${rl.resetInSeconds}s.`,
+          },
+          { status: 429 }
         );
       }
 

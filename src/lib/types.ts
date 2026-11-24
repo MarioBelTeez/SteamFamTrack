@@ -110,3 +110,36 @@ export interface SwapSimulationResult {
   uniqueValueDelta: number;
   shareDeltas: SwapShareDelta[];
 }
+
+export interface SnapshotMemberEntry {
+  name: string;
+  steamId64: string;
+  totalGames: number;
+  exclusiveGames: number;
+  totalRawValue: number;
+  sharePercent: number;
+}
+
+export interface MonthlySnapshotRecord {
+  id: string;
+  snapshotMonth: string; // YYYY-MM
+  region: SteamRegion;
+  uniqueGamesCount: number;
+  uniqueCatalogValue: number;
+  sumCopiesCount: number;
+  sumCopiesValue: number;
+  memberBreakdown: SnapshotMemberEntry[];
+  createdAt: string;
+}
+
+export interface SavedFamilyData {
+  id: string;
+  slug: string;
+  name: string;
+  region: SteamRegion;
+  members: FamilyMemberInput[];
+  waitlist: FamilyMemberInput[];
+  snapshots: MonthlySnapshotRecord[];
+  createdAt: string;
+  updatedAt: string;
+}

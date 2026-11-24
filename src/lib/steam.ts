@@ -1,3 +1,4 @@
+import { getSteamFamDb } from "./supabase";
 import { FamilyMemberInput, GameInfo, MemberLibrary, SteamRegion } from "./types";
 
 interface CacheEntry<T> {
@@ -5,7 +6,8 @@ interface CacheEntry<T> {
   expiresAt: number;
 }
 
-const APP_CACHE_TTL_MS = 1000 * 60 * 60 * 12; // 12 hours
+const APP_CACHE_TTL_MS = 1000 * 60 * 60 * 12; // 12h in-memory
+const DB_CACHE_TTL_MS = 1000 * 60 * 60 * 24 * 7; // 7d persistent DB cache
 const appDetailsCache = new Map<string, CacheEntry<Partial<GameInfo>>>();
 
 const FAMILY_SHARING_CATEGORY_ID = 62;
@@ -107,27 +109,17 @@ async function fetchOwnedGames(
   return games;
 }
 
-async function fetchAppDetails(
+async function fetchAppDetailsFromSteam(
   appid: number,
   region: SteamRegion
-): Promise<Partial<GameInfo>> {
-  const cacheKey = `${appid}:${region}`;
-  const cached = appDetailsCache.get(cacheKey);
-  if (cached && cached.expiresAt > Date.now()) {
-    return cached.value;
-  }
-
+): Promise<Partial<GameInfo> | null> {
   try {
     const url = `https://store.steampowered.com/api/appdetails?appids=${appid}&cc=${region}&filters=price_overview,categories,is_free`;
     const res = await fetch(url);
-    if (!res.ok) {
-      return { rawPrice: 0, isFree: false, familySharingExcluded: false };
-    }
+    if (!res.ok) return null;
     const json = await res.json();
     const entry = json?.[String(appid)];
-    if (!entry?.success || !entry?.data) {
-      return { rawPrice: 0, isFree: false, familySharingExcluded: false };
-    }
+    if (!entry?.success || !entry?.data) return null;
 
     const data = entry.data;
     const isFree = Boolean(data.is_free);
@@ -140,24 +132,94 @@ async function fetchAppDetails(
     const hasFamilySharing = categories.some(
       (c) => c.id === FAMILY_SHARING_CATEGORY_ID
     );
-    // Paid games that lack category 62 are opted out of Steam Family Sharing
     const familySharingExcluded =
       !isFree && categories.length > 0 && !hasFamilySharing;
 
-    const result: Partial<GameInfo> = {
+    return {
       rawPrice,
       isFree,
       familySharingExcluded,
     };
-
-    appDetailsCache.set(cacheKey, {
-      value: result,
-      expiresAt: Date.now() + APP_CACHE_TTL_MS,
-    });
-
-    return result;
   } catch {
-    return { rawPrice: 0, isFree: false, familySharingExcluded: false };
+    return null;
+  }
+}
+
+async function loadCachedPrices(
+  appIds: number[],
+  region: SteamRegion
+): Promise<Map<number, Partial<GameInfo>>> {
+  const result = new Map<number, Partial<GameInfo>>();
+  const missingFromMem: number[] = [];
+  const now = Date.now();
+
+  for (const appid of appIds) {
+    const mem = appDetailsCache.get(`${appid}:${region}`);
+    if (mem && mem.expiresAt > now) {
+      result.set(appid, mem.value);
+    } else {
+      missingFromMem.push(appid);
+    }
+  }
+
+  if (missingFromMem.length === 0) return result;
+
+  const db = getSteamFamDb();
+  if (!db) return result;
+
+  try {
+    const cutoffIso = new Date(now - DB_CACHE_TTL_MS).toISOString();
+    const { data } = await db
+      .from("app_price_cache")
+      .select("appid, raw_price, is_free, family_sharing_excluded")
+      .eq("region", region)
+      .in("appid", missingFromMem)
+      .gte("updated_at", cutoffIso);
+
+    if (Array.isArray(data)) {
+      for (const row of data) {
+        const info: Partial<GameInfo> = {
+          rawPrice: Number(row.raw_price) || 0,
+          isFree: Boolean(row.is_free),
+          familySharingExcluded: Boolean(row.family_sharing_excluded),
+        };
+        result.set(row.appid, info);
+        appDetailsCache.set(`${row.appid}:${region}`, {
+          value: info,
+          expiresAt: now + APP_CACHE_TTL_MS,
+        });
+      }
+    }
+  } catch {
+    // Non-fatal: fall back to live Steam Store fetch
+  }
+
+  return result;
+}
+
+async function persistPriceCache(
+  entries: { appid: number; name?: string; info: Partial<GameInfo> }[],
+  region: SteamRegion
+) {
+  if (entries.length === 0) return;
+  const db = getSteamFamDb();
+  if (!db) return;
+
+  try {
+    const rows = entries.map((e) => ({
+      appid: e.appid,
+      region,
+      name: e.name ?? null,
+      raw_price: e.info.rawPrice ?? 0,
+      is_free: Boolean(e.info.isFree),
+      family_sharing_excluded: Boolean(e.info.familySharingExcluded),
+      updated_at: new Date().toISOString(),
+    }));
+    await db
+      .from("app_price_cache")
+      .upsert(rows, { onConflict: "appid,region" });
+  } catch {
+    // Non-fatal cache write failure
   }
 }
 
@@ -177,30 +239,52 @@ export async function fetchMemberLibrariesLive(
     })
   );
 
-  // Deduplicate unique appids across all members before querying Steam Store
-  const uniqueAppIds = new Set<number>();
+  const uniqueAppNames = new Map<number, string>();
   for (const r of resolved) {
     for (const g of r.owned) {
-      uniqueAppIds.add(g.appid);
+      if (!uniqueAppNames.has(g.appid)) {
+        uniqueAppNames.set(g.appid, g.name ?? `App ${g.appid}`);
+      }
     }
   }
 
-  const appIdsToFetch = Array.from(uniqueAppIds).slice(
-    0,
-    MAX_STORE_LOOKUPS_PER_RUN
-  );
+  const allAppIds = Array.from(uniqueAppNames.keys());
+  const detailsMap = await loadCachedPrices(allAppIds, region);
 
-  const detailsMap = new Map<number, Partial<GameInfo>>();
+  const uncachedIds = allAppIds
+    .filter((id) => !detailsMap.has(id))
+    .slice(0, MAX_STORE_LOOKUPS_PER_RUN);
+
+  const newlyFetched: { appid: number; name?: string; info: Partial<GameInfo> }[] =
+    [];
   const BATCH_SIZE = 8;
-  for (let i = 0; i < appIdsToFetch.length; i += BATCH_SIZE) {
-    const batch = appIdsToFetch.slice(i, i + BATCH_SIZE);
+  const now = Date.now();
+
+  for (let i = 0; i < uncachedIds.length; i += BATCH_SIZE) {
+    const batch = uncachedIds.slice(i, i + BATCH_SIZE);
     const results = await Promise.all(
-      batch.map(async (appid) => [appid, await fetchAppDetails(appid, region)] as const)
+      batch.map(async (appid) => [
+        appid,
+        await fetchAppDetailsFromSteam(appid, region),
+      ] as const)
     );
     for (const [appid, info] of results) {
+      if (!info) continue;
       detailsMap.set(appid, info);
+      appDetailsCache.set(`${appid}:${region}`, {
+        value: info,
+        expiresAt: now + APP_CACHE_TTL_MS,
+      });
+      newlyFetched.push({
+        appid,
+        name: uniqueAppNames.get(appid),
+        info,
+      });
     }
   }
+
+  // Persist freshly fetched prices to Supabase `steamfam.app_price_cache`
+  await persistPriceCache(newlyFetched, region);
 
   return resolved.map(({ member, steamId64, summary, owned }) => {
     let excludedCount = 0;
