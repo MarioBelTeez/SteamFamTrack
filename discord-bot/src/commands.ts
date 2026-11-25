@@ -1,4 +1,19 @@
-import { SlashCommandBuilder } from "discord.js";
+import {
+  ApplicationIntegrationType,
+  InteractionContextType,
+  SlashCommandBuilder,
+} from "discord.js";
+
+const integrationTypes = [
+  ApplicationIntegrationType.GuildInstall,
+  ApplicationIntegrationType.UserInstall,
+];
+
+const contexts = [
+  InteractionContextType.Guild,
+  InteractionContextType.BotDM,
+  InteractionContextType.PrivateChannel,
+];
 
 export const commands = [
   new SlashCommandBuilder()
@@ -6,6 +21,8 @@ export const commands = [
     .setDescription(
       "Link your Discord account to your Steam profile (auto-detects your SteamFamTrack family)"
     )
+    .setIntegrationTypes(integrationTypes)
+    .setContexts(contexts)
     .addStringOption((opt) =>
       opt
         .setName("steam_url")
@@ -16,6 +33,8 @@ export const commands = [
   new SlashCommandBuilder()
     .setName("family")
     .setDescription("Inspect your Steam Family catalog, snapshots, swaps, and waitlist")
+    .setIntegrationTypes(integrationTypes)
+    .setContexts(contexts)
     .addSubcommand((sub) =>
       sub
         .setName("board")
