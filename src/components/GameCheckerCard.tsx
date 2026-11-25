@@ -243,29 +243,29 @@ function BrowseGameCard({
         )}
       </div>
 
-      <div className="p-3.5 flex-1 flex flex-col justify-between gap-3">
-        <div className="space-y-2">
-          <h4 className="font-display text-lg leading-tight text-white group-hover:text-bt-red transition-colors line-clamp-2">
+      <div className="p-4 sm:p-5 flex-1 flex flex-col justify-between gap-3.5">
+        <div className="space-y-2.5">
+          <h4 className="font-display text-lg sm:text-xl leading-tight text-white group-hover:text-bt-red transition-colors line-clamp-2">
             {game.name}
           </h4>
 
-          <div className="flex flex-wrap items-center gap-1.5">
+          <div className="flex flex-wrap items-center gap-2">
             {game.isFree ? (
-              <span className="px-1.5 py-0.5 bg-emerald-500/15 border border-emerald-500/40 text-emerald-300 font-mono text-[10px] uppercase tracking-wider">
+              <span className="px-2 py-1 bg-emerald-500/15 border border-emerald-500/40 text-emerald-300 font-mono text-[10px] uppercase tracking-wider">
                 Free to Play
               </span>
             ) : game.familySharingSupported ? (
-              <span className="px-1.5 py-0.5 bg-emerald-500/15 border border-emerald-500/40 text-emerald-300 font-mono text-[10px] uppercase tracking-wider inline-flex items-center gap-1">
+              <span className="px-2 py-1 bg-emerald-500/15 border border-emerald-500/40 text-emerald-300 font-mono text-[10px] uppercase tracking-wider inline-flex items-center gap-1">
                 <CheckCircle2 className="w-3 h-3" /> Family Share
               </span>
             ) : (
-              <span className="px-1.5 py-0.5 bg-bt-red/15 border border-bt-red/40 text-red-200 font-mono text-[10px] uppercase tracking-wider inline-flex items-center gap-1">
+              <span className="px-2 py-1 bg-bt-red/15 border border-bt-red/40 text-red-200 font-mono text-[10px] uppercase tracking-wider inline-flex items-center gap-1">
                 <ShieldAlert className="w-3 h-3 text-bt-red" /> No Sharing
               </span>
             )}
 
             {owners.length > 0 && (
-              <span className="px-1.5 py-0.5 bg-sky-500/15 border border-sky-500/40 text-sky-200 font-mono text-[10px] uppercase tracking-wider inline-flex items-center gap-1">
+              <span className="px-2 py-1 bg-sky-500/15 border border-sky-500/40 text-sky-200 font-mono text-[10px] uppercase tracking-wider inline-flex items-center gap-1">
                 <Users className="w-3 h-3" />
                 {owners.length === 1
                   ? `Owned: ${owners[0]}`
@@ -740,21 +740,24 @@ export function GameCheckerCard({
   const resultStarred = result ? starredAppIds.has(result.appid) : false;
 
   return (
-    <div className="space-y-6">
-      <div className="p5-frame bg-bt-card border border-bt-border p-5 sm:p-6 space-y-4">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <div>
-            <div className="font-mono text-[10px] uppercase tracking-[0.2em] text-bt-red">
-              PRE-PURCHASE & DISCOUNT CHECKER // {regionInfo.label}
+    <div className="space-y-7">
+      <div className="p5-frame bg-bt-border">
+        <div className="bg-bt-surface p-6 sm:p-7 space-y-5">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <div className="font-mono text-[10px] uppercase tracking-[0.2em] text-bt-red">
+                PRE-PURCHASE &amp; DISCOUNT CHECKER // {regionInfo.label}
+              </div>
+              <h2 className="font-display text-2xl sm:text-3xl tracking-wide text-white mt-1">
+                SHOULD YOU BUY THIS GAME?
+              </h2>
             </div>
-            <h2 className="font-display text-2xl sm:text-3xl tracking-wide text-white mt-0.5">
-              SHOULD YOU BUY THIS GAME?
-            </h2>
+            <span className="p5-tag bg-bt-elevated border border-bt-border px-3 py-1 text-bt-muted">
+              <span className="p5-unskew inline-block font-mono text-[10px] uppercase tracking-widest">
+                LIVE STEAM STORE + FAMILY OVERLAP
+              </span>
+            </span>
           </div>
-          <span className="p5-tag bg-bt-surface border border-bt-border text-bt-muted">
-            LIVE STEAM STORE + FAMILY OVERLAP
-          </span>
-        </div>
 
         <form onSubmit={handleSubmit} className="flex flex-col sm:flex-row gap-3">
           <div className="relative flex-1">
@@ -790,6 +793,7 @@ export function GameCheckerCard({
             <span>{error}</span>
           </div>
         )}
+        </div>
       </div>
 
       {/* Spotlight Anchor & Hero Card */}

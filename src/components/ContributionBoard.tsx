@@ -748,16 +748,21 @@ export function ContributionBoard({ analysis }: ContributionBoardProps) {
 
                         {/* Diverging Bar Track */}
                         <div
-                          className="mt-2.5 relative grid grid-cols-2 h-3 w-full bg-bt-bg border border-bt-border/80"
+                          className="mt-3 relative grid grid-cols-2 h-4 w-full bg-bt-bg border border-bt-border/80 overflow-visible"
                           title={`${fm.name}: ${formatSignedMoney(fm.deltaFromAverageValue)} vs. ${formatMoney(analysis.fairness.averageRawValue)} average`}
                         >
                           {/* Left Half (Deficit -> extends left from center in BelTeez Red) */}
-                          <div className="flex justify-end items-center h-full overflow-hidden">
+                          <div className="flex justify-end items-center h-full overflow-visible">
                             {!isNeutral && !isAhead && isFreeloaderSkull && (
-                              <Skull
-                                className="h-3 w-3 text-bt-red mr-1 shrink-0"
-                                aria-hidden="true"
-                              />
+                              <span
+                                title={`${fm.sharePercent.toFixed(1)}% share (< 15%)`}
+                                className="relative z-10 -mr-1.5 flex h-6 w-6 items-center justify-center rounded-sm border border-bt-red bg-bt-bg shadow-[0_0_8px_rgba(232,0,45,0.55)] shrink-0"
+                              >
+                                <Skull
+                                  className="h-4 w-4 text-bt-red"
+                                  aria-hidden="true"
+                                />
+                              </span>
                             )}
                             {!isNeutral && !isAhead && (
                               <div
