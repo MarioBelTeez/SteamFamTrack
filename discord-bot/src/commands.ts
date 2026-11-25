@@ -85,6 +85,26 @@ export const commands = [
             .setRequired(false)
         )
     ),
+
+  new SlashCommandBuilder()
+    .setName("check")
+    .setDescription(
+      "Check a Steam game's discount, Family Sharing support, and who in your family owns it"
+    )
+    .setIntegrationTypes(integrationTypes)
+    .setContexts(contexts)
+    .addStringOption((opt) =>
+      opt
+        .setName("game")
+        .setDescription("Game name, AppID, or Steam Store URL")
+        .setRequired(true)
+    )
+    .addStringOption((opt) =>
+      opt
+        .setName("family")
+        .setDescription("Optional family name (auto-detects your linked Steam Family if omitted)")
+        .setRequired(false)
+    ),
 ];
 
 export const commandsJson = commands.map((cmd) => cmd.toJSON());

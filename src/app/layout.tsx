@@ -30,10 +30,42 @@ const inter = Inter({
   subsets: ["latin"],
 });
 
+const siteUrl =
+  process.env.NEXT_PUBLIC_SITE_URL || "https://steam-fam-track-zdp6.vercel.app";
+
+const siteTitle = "SteamFamTrack — Steam Family Contribution & Swap Analyzer";
+const siteDescription =
+  "Track Steam Family game contributions, regional value shares, library overlaps, 1-year slot cooldowns, and waitlist swap simulations.";
+
 export const metadata: Metadata = {
-  title: "SteamFamTrack — Steam Family Contribution & Swap Analyzer",
-  description:
-    "Track Steam Family game contributions, regional value shares, library overlaps, 1-year slot cooldowns, and waitlist swap simulations.",
+  metadataBase: new URL(siteUrl),
+  title: {
+    default: siteTitle,
+    template: "%s | SteamFamTrack",
+  },
+  description: siteDescription,
+  keywords: [
+    "Steam Family Sharing",
+    "Steam Family tracker",
+    "Steam library overlap",
+    "Steam slot cooldown",
+    "waitlist swap simulator",
+  ],
+  alternates: {
+    canonical: "/",
+  },
+  openGraph: {
+    type: "website",
+    siteName: "SteamFamTrack",
+    title: siteTitle,
+    description: siteDescription,
+    url: "/",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: siteTitle,
+    description: siteDescription,
+  },
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {

@@ -373,6 +373,11 @@ export async function handleInteraction(
     return;
   }
 
+  if (interaction.commandName === "check") {
+    await handleCheck(interaction);
+    return;
+  }
+
   if (interaction.commandName === "family") {
     const sub = interaction.options.getSubcommand();
     if (sub === "board") {
@@ -750,6 +755,133 @@ async function handleFamilyWaitlist(
     .setFooter({
       text: `${family.name} · Live Steam`,
     })
+    .setTimestamp();
+
+  await interaction.editReply({ embeds: [embed] });
+}
+
+
+interface SteamCheckApiResponse {
+  appid: number;
+  name: string;
+  headerImage: string;
+  storeUrl: string;
+  region: string;
+  isFree: boolean;
+  familySharingSupported: boolean;
+  familySharingNote: string;
+  priceOverview: {
+    currency: string;
+    initial: number;
+    final: number;
+    discountPercent: number;
+    initialFormatted: string;
+    finalFormatted: string;
+  } | null;
+  error?: string;
+}
+
+async function handleCheck(
+  interaction: ChatInputCommandInteraction
+): Promise<void> {
+  await interaction.deferReply();
+
+  const gameQuery = interaction.options.getString("game", true).trim();
+  const familyFilter = interaction.options.getString("family", false);
+
+  const familyOrMsg = await resolveFamilyForDiscordUser(
+    interaction.user.id,
+    familyFilter
+  );
+  const family = typeof familyOrMsg === "string" ? null : familyOrMsg;
+  const region = family?.region ?? "us";
+
+  const checkRes = await fetch(`${getApiBaseUrl()}/api/steam/check`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ query: gameQuery, region }),
+  });
+  const game = (await checkRes.json()) as SteamCheckApiResponse;
+
+  if (!checkRes.ok || !game.appid) {
+    await interaction.editReply({
+      content: game.error || `No Steam game found matching "${gameQuery}".`,
+    });
+    return;
+  }
+
+  let ownershipText =
+    "_Link your Steam account with `/link` to see who in your family owns this._";
+
+  if (family) {
+    const analyzed = await runAnalyze(family);
+    const activeOwners = analyzed.activeLibraries.filter((lib) =>
+      lib.games.some((g) => g.appid === game.appid)
+    );
+    const waitlistOwners = analyzed.waitlistLibraries.filter((lib) =>
+      lib.games.some((g) => g.appid === game.appid)
+    );
+
+    if (activeOwners.length > 0) {
+      const names = activeOwners
+        .map((o) => `**${o.personaName || o.member.name}**`)
+        .join(", ");
+      ownershipText = game.familySharingSupported
+        ? `✅ Already owned in **${family.name}** by ${names}`
+        : `⚠️ Owned by ${names}, but **Family Sharing is disabled**`;
+    } else {
+      ownershipText = `🆕 Nobody in **${family.name}** owns this yet.`;
+    }
+
+    if (waitlistOwners.length > 0) {
+      const wNames = waitlistOwners
+        .map((o) => o.personaName || o.member.name)
+        .join(", ");
+      ownershipText += `\nWaitlist owners: ${wNames}`;
+    }
+  }
+
+  let priceText = "Unavailable";
+  if (game.isFree) {
+    priceText = "Free to Play";
+  } else if (game.priceOverview) {
+    priceText =
+      game.priceOverview.discountPercent > 0
+        ? `🏷️ **-${game.priceOverview.discountPercent}%** → **${game.priceOverview.finalFormatted}** ~~${game.priceOverview.initialFormatted}~~`
+        : `**${game.priceOverview.finalFormatted}**`;
+  }
+
+  const sharingText = game.isFree
+    ? "🟢 Free to Play"
+    : game.familySharingSupported
+      ? "✅ Family Sharing Supported"
+      : "🚫 Opted Out of Family Sharing";
+
+  const embed = new EmbedBuilder()
+    .setColor(
+      game.isFree || game.familySharingSupported ? EMBED_COLOR : ACCENT_RED
+    )
+    .setTitle(`🛒 ${game.name}`)
+    .setURL(game.storeUrl)
+    .setThumbnail(game.headerImage)
+    .addFields(
+      {
+        name: `Price (${region.toUpperCase()})`,
+        value: priceText,
+        inline: true,
+      },
+      {
+        name: "Family Sharing",
+        value: sharingText,
+        inline: true,
+      },
+      {
+        name: "Family Ownership",
+        value: ownershipText,
+        inline: false,
+      }
+    )
+    .setFooter({ text: `AppID ${game.appid} · SteamFamTrack` })
     .setTimestamp();
 
   await interaction.editReply({ embeds: [embed] });

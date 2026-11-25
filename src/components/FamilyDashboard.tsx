@@ -3,6 +3,7 @@
 import { type MouseEvent, useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { ContributionBoard } from "@/components/ContributionBoard";
+import { GameCheckerCard } from "@/components/GameCheckerCard";
 import {
   FamilyLaunchpad,
   type SteamSessionUser,
@@ -38,11 +39,12 @@ import {
   RefreshCw,
   RotateCcw,
   Save,
+  Search,
   Trash2,
   Users,
 } from "lucide-react";
 
-type TabId = "board" | "overlap" | "simulator" | "history";
+type TabId = "board" | "overlap" | "simulator" | "history" | "checker";
 
 interface NavItem {
   id: TabId;
@@ -80,6 +82,13 @@ const NAV_ITEMS: NavItem[] = [
     label: "Monthly Deltas",
     sectionTitle: "MONTHLY DELTAS",
     icon: Calendar,
+  },
+  {
+    id: "checker",
+    index: "05",
+    label: "Game & Discount Checker",
+    sectionTitle: "GAME & DISCOUNT CHECKER",
+    icon: Search,
   },
 ];
 
@@ -1305,6 +1314,13 @@ export function FamilyDashboard({
                             ? () => setSaveModalOpen(true)
                             : undefined
                         }
+                      />
+                    )}
+                    {activeTab === "checker" && (
+                      <GameCheckerCard
+                        activeLibraries={activeLibraries}
+                        waitlistLibraries={waitlistLibraries}
+                        region={region}
                       />
                     )}
                   </>
