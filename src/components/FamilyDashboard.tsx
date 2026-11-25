@@ -12,6 +12,7 @@ import {
 import { MemberEditorModal } from "@/components/MemberEditorModal";
 import { MonthlyHistory } from "@/components/MonthlyHistory";
 import { OverlapAndCatalog } from "@/components/OverlapAndCatalog";
+import { RegionSelect } from "@/components/RegionSelect";
 import { SaveFamilyModal } from "@/components/SaveFamilyModal";
 import { SwapSimulator } from "@/components/SwapSimulator";
 import {
@@ -752,25 +753,15 @@ export function FamilyDashboard({
             {hasActiveRoster ? (
               <div className="flex flex-wrap items-center gap-2 bg-bt-surface border border-bt-border p-1.5">
                 {/* Region Picker */}
-                <select
-                  aria-label="Pricing region"
+                <RegionSelect
                   value={region}
-                  onChange={(e) => {
+                  onChange={(nextRegion) => {
                     setLoading(true);
-                    setRegion(e.target.value as SteamRegion);
+                    setRegion(nextRegion);
                   }}
-                  className="cursor-pointer bg-bt-bg border border-bt-border px-2.5 py-1.5 font-mono text-xs text-white hover:border-bt-muted transition-colors focus:border-bt-red focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-bt-red"
-                >
-                  {Object.values(STEAM_REGIONS).map((r) => (
-                    <option
-                      key={r.code}
-                      value={r.code}
-                      className="bg-bt-bg text-white"
-                    >
-                      {r.label}
-                    </option>
-                  ))}
-                </select>
+                  ariaLabel="Pricing region"
+                  compact
+                />
 
                 {/* Edit Roster (Owner or Preview Sandbox) */}
                 {isOwner && (

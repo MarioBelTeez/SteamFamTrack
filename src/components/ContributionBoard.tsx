@@ -14,6 +14,7 @@ import {
   Library,
   Scale,
   ShieldAlert,
+  Skull,
 } from "lucide-react";
 
 interface ContributionBoardProps {
@@ -681,6 +682,7 @@ export function ContributionBoard({ analysis }: ContributionBoardProps) {
                   {analysis.fairness.members.map((fm) => {
                     const isNeutral = Math.abs(fm.deltaFromAverageValue) < 0.005;
                     const isAhead = fm.deltaFromAverageValue > 0;
+                    const isFreeloaderSkull = fm.sharePercent < 15 && !isAhead;
                     const ratioPct = Math.min(
                       100,
                       (Math.abs(fm.deltaFromAverageValue) / maxAbsDelta) * 100
@@ -701,6 +703,15 @@ export function ContributionBoard({ analysis }: ContributionBoardProps) {
                             <span className="font-condensed text-base font-bold uppercase tracking-wide text-white truncate">
                               {fm.name}
                             </span>
+                            {isFreeloaderSkull && (
+                              <span
+                                title={`${fm.sharePercent.toFixed(1)}% share (< 15%)`}
+                                className="inline-flex items-center gap-1 border border-bt-red/50 bg-bt-red/15 px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase tracking-wider text-bt-red shrink-0"
+                              >
+                                <Skull className="h-3 w-3" aria-hidden="true" />
+                                &lt;15%
+                              </span>
+                            )}
                             {fm.isUpNext && (
                               <span className="p5-tag inline-flex items-center bg-bt-red px-2 py-0.5 text-white shrink-0">
                                 <span className="p5-unskew font-mono text-[9px] font-bold uppercase tracking-[0.14em]">
@@ -741,7 +752,13 @@ export function ContributionBoard({ analysis }: ContributionBoardProps) {
                           title={`${fm.name}: ${formatSignedMoney(fm.deltaFromAverageValue)} vs. ${formatMoney(analysis.fairness.averageRawValue)} average`}
                         >
                           {/* Left Half (Deficit -> extends left from center in BelTeez Red) */}
-                          <div className="flex justify-end h-full overflow-hidden">
+                          <div className="flex justify-end items-center h-full overflow-hidden">
+                            {!isNeutral && !isAhead && isFreeloaderSkull && (
+                              <Skull
+                                className="h-3 w-3 text-bt-red mr-1 shrink-0"
+                                aria-hidden="true"
+                              />
+                            )}
                             {!isNeutral && !isAhead && (
                               <div
                                 className="h-full bg-bt-red transition-all duration-300"

@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { RegionSelect } from "@/components/RegionSelect";
 import {
   FamilyMemberInput,
   STEAM_REGIONS,
@@ -1047,28 +1048,17 @@ export function FamilyLaunchpad({
                 </div>
 
                 {/* Region Selector */}
-                <label className="flex items-center gap-2 border border-bt-border bg-bt-bg px-2.5 py-1.5 focus-within:border-bt-red transition-colors">
-                  <Globe className="h-3.5 w-3.5 text-bt-red shrink-0" />
+                <div className="flex items-center gap-2">
                   <span className="font-condensed text-[10px] font-bold uppercase tracking-widest text-bt-muted">
                     Region
                   </span>
-                  <select
+                  <RegionSelect
                     value={region}
-                    onChange={(e) => setRegion(e.target.value as SteamRegion)}
-                    aria-label="Steam store pricing region"
-                    className="cursor-pointer bg-bt-bg font-mono text-xs text-white focus:outline-none"
-                  >
-                    {Object.values(STEAM_REGIONS).map((r) => (
-                      <option
-                        key={r.code}
-                        value={r.code}
-                        className="bg-bt-surface text-white"
-                      >
-                        {r.label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
+                    onChange={setRegion}
+                    ariaLabel="Steam store pricing region"
+                    compact
+                  />
+                </div>
               </div>
 
               {/* Action Strip */}
