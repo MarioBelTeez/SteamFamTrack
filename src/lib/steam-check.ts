@@ -177,3 +177,273 @@ export async function checkSteamGame(opts: {
     alternatives,
   };
 }
+
+
+export interface EnrichedStoreGame {
+  appid: number;
+  name: string;
+  headerImage: string;
+  storeUrl: string;
+  isFree: boolean;
+  familySharingSupported: boolean;
+  discountPercent: number;
+  initialFormatted: string;
+  finalFormatted: string;
+  finalPriceCents: number;
+}
+
+export interface FamilyWishlistGame extends EnrichedStoreGame {
+  wishedBy: Array<{ memberId: string; name: string; steamId64: string }>;
+  wishCount: number;
+}
+
+const DISCOUNTS_CACHE_TTL_MS = 15 * 60 * 1000;
+const discountsCache = new Map<
+  SteamRegion,
+  { items: EnrichedStoreGame[]; expiresAt: number }
+>();
+
+export async function fetchStoreBrowseItems(
+  appids: number[],
+  region: SteamRegion
+): Promise<Map<number, EnrichedStoreGame>> {
+  const uniqueIds = Array.from(new Set(appids.filter((id) => id > 0))).slice(
+    0,
+    80
+  );
+  const result = new Map<number, EnrichedStoreGame>();
+  if (uniqueIds.length === 0) return result;
+
+  const cc = REGION_TO_COUNTRY_CODE[region] ?? "US";
+  const inputJson = JSON.stringify({
+    ids: uniqueIds.map((appid) => ({ appid })),
+    context: {
+      language: "english",
+      country_code: cc,
+      steam_realm: 1,
+    },
+    data_request: {
+      include_basic_info: true,
+      include_assets: true,
+    },
+  });
+
+  const url = `https://api.steampowered.com/IStoreBrowseService/GetItems/v1/?input_json=${encodeURIComponent(
+    inputJson
+  )}`;
+  const res = await fetch(url, { cache: "no-store" });
+  if (!res.ok) {
+    throw new Error(`Steam StoreBrowse failed (${res.status})`);
+  }
+
+  const json = (await res.json()) as {
+    response?: {
+      store_items?: Array<{
+        appid?: number;
+        id?: number;
+        name?: string;
+        is_free?: boolean | null;
+        best_purchase_option?: {
+          discount_pct?: number;
+          formatted_original_price?: string;
+          formatted_final_price?: string;
+          final_price_in_cents?: string | number;
+        } | null;
+        categories?: {
+          feature_categoryids?: number[];
+          supported_player_categoryids?: number[];
+          controller_categoryids?: number[];
+        } | null;
+        assets?: {
+          asset_url_format?: string;
+          header?: string;
+        } | null;
+      }>;
+    };
+  };
+
+  for (const item of json.response?.store_items ?? []) {
+    const appid = Number(item.appid ?? item.id);
+    if (!Number.isFinite(appid) || appid <= 0) continue;
+
+    const isFree = Boolean(item.is_free);
+    const cats = [
+      ...(item.categories?.feature_categoryids ?? []),
+      ...(item.categories?.supported_player_categoryids ?? []),
+      ...(item.categories?.controller_categoryids ?? []),
+    ];
+    const familySharingSupported =
+      !isFree && cats.includes(FAMILY_SHARING_CATEGORY_ID);
+
+    const format = item.assets?.asset_url_format;
+    const header = item.assets?.header;
+    const headerImage =
+      format && header
+        ? `https://shared.fastly.steamstatic.com/store_item_assets/${format.replace(
+            "${FILENAME}",
+            header
+          )}`
+        : `https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/${appid}/header.jpg`;
+
+    const po = item.best_purchase_option;
+    const finalPriceCents = Number(po?.final_price_in_cents ?? 0) || 0;
+
+    result.set(appid, {
+      appid,
+      name: item.name || `App ${appid}`,
+      headerImage,
+      storeUrl: `https://store.steampowered.com/app/${appid}/`,
+      isFree,
+      familySharingSupported,
+      discountPercent: Number(po?.discount_pct ?? 0) || 0,
+      initialFormatted: po?.formatted_original_price || "",
+      finalFormatted: isFree ? "Free" : po?.formatted_final_price || "",
+      finalPriceCents,
+    });
+  }
+
+  return result;
+}
+
+export async function getPopularSteamDiscounts(
+  region: SteamRegion
+): Promise<EnrichedStoreGame[]> {
+  const cached = discountsCache.get(region);
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.items;
+  }
+
+  const cc = REGION_TO_COUNTRY_CODE[region] ?? "US";
+  let appids: number[] = [];
+
+  try {
+    const searchUrl = `https://store.steampowered.com/search/results/?specials=1&filter=topsellers&json=1&cc=${cc}`;
+    const res = await fetch(searchUrl, { cache: "no-store" });
+    if (res.ok) {
+      const data = (await res.json()) as {
+        items?: Array<{ name?: string; logo?: string }>;
+      };
+      appids = (data.items ?? [])
+        .map((it) => {
+          const match = it.logo?.match(/\/apps\/(\d+)\//i);
+          return match ? Number(match[1]) : 0;
+        })
+        .filter((id) => id > 0);
+    }
+  } catch {
+    // Fallback below
+  }
+
+  if (appids.length === 0) {
+    const fcUrl = `https://store.steampowered.com/api/featuredcategories/?cc=${cc}&l=english`;
+    const fcRes = await fetch(fcUrl, { cache: "no-store" });
+    if (fcRes.ok) {
+      const fc = (await fcRes.json()) as {
+        specials?: { items?: Array<{ id?: number }> };
+      };
+      appids = (fc.specials?.items ?? [])
+        .map((it) => Number(it.id ?? 0))
+        .filter((id) => id > 0);
+    }
+  }
+
+  const enrichedMap = await fetchStoreBrowseItems(appids.slice(0, 48), region);
+  const items = appids
+    .map((id) => enrichedMap.get(id))
+    .filter(
+      (item): item is EnrichedStoreGame =>
+        Boolean(item) && (item!.discountPercent > 0 || Boolean(item!.finalFormatted))
+    );
+
+  discountsCache.set(region, {
+    items,
+    expiresAt: Date.now() + DISCOUNTS_CACHE_TTL_MS,
+  });
+
+  return items;
+}
+
+export async function getFamilyWishlists(opts: {
+  members: Array<{ memberId: string; name: string; steamId64: string }>;
+  region: SteamRegion;
+}): Promise<{ items: FamilyWishlistGame[]; privateMembers: string[] }> {
+  const privateMembers: string[] = [];
+  const wishMap = new Map<
+    number,
+    {
+      wishedBy: Array<{ memberId: string; name: string; steamId64: string }>;
+      minPriority: number;
+    }
+  >();
+
+  const settled = await Promise.allSettled(
+    opts.members.map(async (member) => {
+      const url = `https://api.steampowered.com/IWishlistService/GetWishlist/v1/?steamid=${encodeURIComponent(
+        member.steamId64
+      )}`;
+      const res = await fetch(url, { cache: "no-store" });
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}`);
+      }
+      const data = (await res.json()) as {
+        response?: {
+          items?: Array<{ appid?: number; priority?: number }>;
+        };
+      };
+      return {
+        member,
+        items: data.response?.items ?? [],
+      };
+    })
+  );
+
+  settled.forEach((outcome, idx) => {
+    const member = opts.members[idx];
+    if (outcome.status !== "fulfilled" || outcome.value.items.length === 0) {
+      privateMembers.push(member.name);
+      return;
+    }
+
+    for (const item of outcome.value.items) {
+      const appid = Number(item.appid ?? 0);
+      if (!appid) continue;
+      const existing = wishMap.get(appid) ?? {
+        wishedBy: [],
+        minPriority: 9999,
+      };
+      if (!existing.wishedBy.some((w) => w.steamId64 === member.steamId64)) {
+        existing.wishedBy.push(member);
+      }
+      const prio = Number(item.priority ?? 999);
+      if (prio > 0 && prio < existing.minPriority) {
+        existing.minPriority = prio;
+      }
+      wishMap.set(appid, existing);
+    }
+  });
+
+  const sortedAppIds = Array.from(wishMap.entries())
+    .sort(
+      (a, b) =>
+        b[1].wishedBy.length - a[1].wishedBy.length ||
+        a[1].minPriority - b[1].minPriority
+    )
+    .slice(0, 48)
+    .map(([appid]) => appid);
+
+  const enrichedMap = await fetchStoreBrowseItems(sortedAppIds, opts.region);
+  const items: FamilyWishlistGame[] = [];
+
+  for (const appid of sortedAppIds) {
+    const store = enrichedMap.get(appid);
+    const wish = wishMap.get(appid);
+    if (!store || !wish) continue;
+    items.push({
+      ...store,
+      wishedBy: wish.wishedBy,
+      wishCount: wish.wishedBy.length,
+    });
+  }
+
+  return { items, privateMembers };
+}

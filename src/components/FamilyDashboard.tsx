@@ -3,6 +3,7 @@
 import { type MouseEvent, useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { ContributionBoard } from "@/components/ContributionBoard";
+import { FamilyLeaderboard } from "@/components/FamilyLeaderboard";
 import { GameCheckerCard } from "@/components/GameCheckerCard";
 import {
   FamilyLaunchpad,
@@ -41,10 +42,17 @@ import {
   Save,
   Search,
   Trash2,
+  Trophy,
   Users,
 } from "lucide-react";
 
-type TabId = "board" | "overlap" | "simulator" | "history" | "checker";
+type TabId =
+  | "board"
+  | "overlap"
+  | "simulator"
+  | "history"
+  | "checker"
+  | "leaderboard";
 
 interface NavItem {
   id: TabId;
@@ -89,6 +97,13 @@ const NAV_ITEMS: NavItem[] = [
     label: "Game & Discount Checker",
     sectionTitle: "GAME & DISCOUNT CHECKER",
     icon: Search,
+  },
+  {
+    id: "leaderboard",
+    index: "06",
+    label: "Family Leaderboard",
+    sectionTitle: "FAMILY LEADERBOARD & AWARDS",
+    icon: Trophy,
   },
 ];
 
@@ -1327,6 +1342,15 @@ export function FamilyDashboard({
                         waitlistLibraries={waitlistLibraries}
                         region={region}
                         fairness={analysis.fairness}
+                        currentUserName={steamUser?.personaName}
+                      />
+                    )}
+                    {activeTab === "leaderboard" && (
+                      <FamilyLeaderboard
+                        analysis={analysis}
+                        activeLibraries={activeLibraries}
+                        waitlistLibraries={waitlistLibraries}
+                        region={region}
                       />
                     )}
                   </>
