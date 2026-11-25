@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { CommunityLinksCard } from "@/components/CommunityLinksCard";
 import { RegionSelect } from "@/components/RegionSelect";
 import {
   FamilyMemberInput,
@@ -1053,6 +1054,8 @@ export function FamilyLaunchpad({
               )}
             </div>
           </div>
+
+          <CommunityLinksCard />
         </div>
 
         {/* Right Interactive Steam Family Builder */}

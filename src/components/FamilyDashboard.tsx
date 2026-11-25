@@ -2,6 +2,7 @@
 
 import { type MouseEvent, useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
+import { CommunityLinksCard } from "@/components/CommunityLinksCard";
 import { ContributionBoard } from "@/components/ContributionBoard";
 import { FamilyLeaderboard } from "@/components/FamilyLeaderboard";
 import { GameCheckerCard } from "@/components/GameCheckerCard";
@@ -1203,7 +1204,10 @@ export function FamilyDashboard({
                 </button>
               )}
 
-              {/* 6. Minimal Studio Signature Footer */}
+              {/* 6. Community & Project Links */}
+              <CommunityLinksCard />
+
+              {/* 7. Minimal Studio Signature Footer */}
               <div className="hidden xl:block pt-2 border-t border-bt-border/60 font-mono text-[10px] tracking-[0.2em] text-bt-dim uppercase">
                 BELTEEZ STUDIO // STEAM FAMILY ANALYZER
               </div>
