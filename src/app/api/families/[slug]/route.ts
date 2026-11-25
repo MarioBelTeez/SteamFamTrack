@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 import { getSteamFamDb, verifyEditKey } from "@/lib/supabase";
 import {
   FamilyMemberInput,
@@ -102,6 +103,17 @@ export async function PUT(req: NextRequest, context: RouteContext) {
   }
 
   const { slug } = await context.params;
+  const ip = getClientIp(req.headers);
+  const rl = checkRateLimit(`edit-family:${ip}:${slug}`, 15, 15 * 60 * 1000);
+  if (!rl.allowed) {
+    return NextResponse.json(
+      {
+        error: `Too many edit attempts. Try again in ${rl.resetInSeconds}s.`,
+      },
+      { status: 429, headers: { "Retry-After": String(rl.resetInSeconds) } }
+    );
+  }
+
   const editKey = req.headers.get("x-edit-key")?.trim() ?? "";
   if (!editKey) {
     return NextResponse.json(

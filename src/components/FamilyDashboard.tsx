@@ -19,6 +19,7 @@ import {
   SteamRegion,
 } from "@/lib/types";
 import {
+  AlertTriangle,
   ArrowRightLeft,
   ArrowUpRight,
   BarChart3,
@@ -74,23 +75,49 @@ const NAV_ITEMS: NavItem[] = [
   },
 ];
 
+interface MemberWarning {
+  memberId: string;
+  memberName: string;
+  steamInput: string;
+  reason: string;
+}
+
 interface AnalyzeResponse {
   mode: "demo" | "live";
   analysis: FamilyAnalysis;
   activeLibraries: MemberLibrary[];
   waitlistLibraries: MemberLibrary[];
+  warnings?: MemberWarning[];
   error?: string;
 }
 
 interface FamilyDashboardProps {
   initialFamily?: SavedFamilyData;
+  initialHasApiKey?: boolean;
+  initialHasDatabase?: boolean;
 }
 
-export function FamilyDashboard({ initialFamily }: FamilyDashboardProps) {
+function isLikelyDemoRoster(list: FamilyMemberInput[]): boolean {
+  return list.every((m) => /^7656119800000001\d$/.test(m.steamUrlOrId.trim()));
+}
+
+export function FamilyDashboard({
+  initialFamily,
+  initialHasApiKey,
+  initialHasDatabase,
+}: FamilyDashboardProps) {
   const [activeTab, setActiveTab] = useState<TabId>("board");
-  const [mode, setMode] = useState<"demo" | "live">("demo");
-  const [hasApiKey, setHasApiKey] = useState(false);
-  const [hasDatabase, setHasDatabase] = useState(Boolean(initialFamily));
+  const [mode, setMode] = useState<"demo" | "live">(
+    initialFamily &&
+      initialHasApiKey &&
+      !isLikelyDemoRoster(initialFamily.members)
+      ? "live"
+      : "demo"
+  );
+  const [hasApiKey, setHasApiKey] = useState(Boolean(initialHasApiKey));
+  const [hasDatabase, setHasDatabase] = useState(
+    Boolean(initialHasDatabase ?? initialFamily)
+  );
   const [region, setRegion] = useState<SteamRegion>(
     initialFamily?.region ?? "ma"
   );
@@ -109,6 +136,7 @@ export function FamilyDashboard({ initialFamily }: FamilyDashboardProps) {
   const [analysis, setAnalysis] = useState<FamilyAnalysis | null>(null);
   const [activeLibraries, setActiveLibraries] = useState<MemberLibrary[]>([]);
   const [waitlistLibraries, setWaitlistLibraries] = useState<MemberLibrary[]>([]);
+  const [warnings, setWarnings] = useState<MemberWarning[]>([]);
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -137,6 +165,9 @@ export function FamilyDashboard({ initialFamily }: FamilyDashboardProps) {
     ) => {
       setLoading(true);
       setError(null);
+      if (nextMode === "demo") {
+        setWarnings([]);
+      }
       try {
         const res = await fetch("/api/analyze", {
           method: "POST",
@@ -156,7 +187,9 @@ export function FamilyDashboard({ initialFamily }: FamilyDashboardProps) {
         setAnalysis(data.analysis);
         setActiveLibraries(data.activeLibraries);
         setWaitlistLibraries(data.waitlistLibraries);
+        setWarnings(data.warnings ?? []);
       } catch (err) {
+        setWarnings([]);
         setError(
           err instanceof Error ? err.message : "Failed to load family data"
         );
@@ -193,10 +226,12 @@ export function FamilyDashboard({ initialFamily }: FamilyDashboardProps) {
         setAnalysis(data.analysis);
         setActiveLibraries(data.activeLibraries);
         setWaitlistLibraries(data.waitlistLibraries);
+        setWarnings(data.warnings ?? []);
         setLoading(false);
       })
       .catch((err) => {
         if (cancelled) return;
+        setWarnings([]);
         setError(
           err instanceof Error ? err.message : "Failed to load family data"
         );
@@ -384,7 +419,10 @@ export function FamilyDashboard({ initialFamily }: FamilyDashboardProps) {
             >
               <button
                 type="button"
-                onClick={() => setMode("demo")}
+                onClick={() => {
+                  setMode("demo");
+                  setWarnings([]);
+                }}
                 className={`cursor-pointer px-2.5 py-1 font-mono text-[11px] uppercase tracking-wider transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-bt-red ${
                   mode === "demo"
                     ? "bg-bt-red text-white font-medium"
@@ -740,12 +778,69 @@ export function FamilyDashboard({ initialFamily }: FamilyDashboardProps) {
                 {mode === "live" && (
                   <button
                     type="button"
-                    onClick={() => setMode("demo")}
+                    onClick={() => {
+                      setMode("demo");
+                      setWarnings([]);
+                    }}
                     className="cursor-pointer shrink-0 bg-bt-red hover:bg-bt-red-hover px-3 py-1.5 font-condensed text-xs font-bold uppercase tracking-wider text-white transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-bt-red"
                   >
                     Switch to Demo Mode
                   </button>
                 )}
+              </div>
+            )}
+
+            {/* Per-Member Lookup Warnings Banner */}
+            {warnings.length > 0 && (
+              <div
+                role="status"
+                className="border-y border-r border-amber-500/35 border-l-4 border-l-amber-400 bg-amber-500/10 px-5 py-4 space-y-3"
+              >
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div className="flex items-start gap-2.5 min-w-0">
+                    <AlertTriangle className="h-4 w-4 text-amber-400 shrink-0 mt-0.5" />
+                    <div className="min-w-0">
+                      <p className="font-condensed text-sm font-bold uppercase tracking-wider text-amber-200">
+                        {warnings.length === 1
+                          ? "1 Member Lookup Issue"
+                          : `${warnings.length} Member Lookup Issues`}
+                      </p>
+                      <p className="font-mono text-[11px] text-amber-200/75 mt-0.5">
+                        Fix Steam IDs/URLs or ask affected members to set Steam
+                        Privacy &rarr; Game Details to Public.
+                      </p>
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => setEditorOpen(true)}
+                    className="cursor-pointer shrink-0 inline-flex items-center gap-1.5 bg-bt-elevated border border-amber-400/50 hover:border-amber-300 px-3 py-1.5 font-condensed text-xs font-bold uppercase tracking-wider text-amber-100 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-400"
+                  >
+                    <Users className="h-3.5 w-3.5 text-amber-400" />
+                    Edit Roster
+                  </button>
+                </div>
+
+                <ul className="space-y-1.5 border-t border-amber-500/20 pt-2.5">
+                  {warnings.map((w) => (
+                    <li
+                      key={`${w.memberId}-${w.steamInput}`}
+                      className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 font-mono text-xs text-amber-100/90"
+                    >
+                      <span className="font-semibold text-white">
+                        {w.memberName}
+                      </span>
+                      {w.steamInput && (
+                        <span className="text-[11px] text-amber-200/60">
+                          ({w.steamInput})
+                        </span>
+                      )}
+                      <span className="text-amber-400">{"//"}</span>
+                      <span className="text-amber-100/85">{w.reason}</span>
+                    </li>
+                  ))}
+                </ul>
               </div>
             )}
 

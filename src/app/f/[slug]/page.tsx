@@ -1,7 +1,8 @@
 import { Suspense } from "react";
 import { notFound } from "next/navigation";
+import { Loader2 } from "lucide-react";
 import { FamilyDashboard } from "@/components/FamilyDashboard";
-import { getSteamFamDb } from "@/lib/supabase";
+import { getSteamFamDb, hasSupabaseConfig } from "@/lib/supabase";
 import {
   FamilyMemberInput,
   MonthlySnapshotRecord,
@@ -82,15 +83,24 @@ async function SavedFamilyContent({ params }: PageProps) {
   if (!family) {
     notFound();
   }
-  return <FamilyDashboard initialFamily={family} />;
+  const hasApiKey = Boolean(process.env.STEAM_API_KEY);
+  const hasDatabase = hasSupabaseConfig();
+  return (
+    <FamilyDashboard
+      initialFamily={family}
+      initialHasApiKey={hasApiKey}
+      initialHasDatabase={hasDatabase}
+    />
+  );
 }
 
 export default function SavedFamilyPage({ params }: PageProps) {
   return (
     <Suspense
       fallback={
-        <div className="min-h-screen flex items-center justify-center bg-[#0b111a] text-sm text-slate-400">
-          Loading saved Steam Family...
+        <div className="min-h-screen flex flex-col items-center justify-center gap-3 bg-bt-bg text-bt-muted font-mono text-xs uppercase tracking-widest px-6">
+          <Loader2 className="h-7 w-7 animate-spin text-bt-red" />
+          <span>Loading saved Steam Family...</span>
         </div>
       }
     >

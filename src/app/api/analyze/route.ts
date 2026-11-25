@@ -5,12 +5,13 @@ import {
   DEMO_WAITLIST_INPUTS,
   buildDemoLibraries,
 } from "@/lib/demo-data";
-import { checkRateLimit } from "@/lib/rate-limit";
+import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 import { fetchMemberLibrariesLive } from "@/lib/steam";
 import { hasSupabaseConfig } from "@/lib/supabase";
 import {
   FamilyMemberInput,
   MemberLibrary,
+  MemberLookupWarning,
   STEAM_REGIONS,
   SteamRegion,
 } from "@/lib/types";
@@ -47,6 +48,7 @@ export async function POST(req: NextRequest) {
 
     let activeLibraries: MemberLibrary[];
     let waitlistLibraries: MemberLibrary[];
+    let warnings: MemberLookupWarning[] = [];
 
     if (mode === "live") {
       const apiKey = process.env.STEAM_API_KEY;
@@ -60,28 +62,48 @@ export async function POST(req: NextRequest) {
         );
       }
 
-      const ip =
-        req.headers.get("cf-connecting-ip") ??
-        req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ??
-        "local";
+      const ip = getClientIp(req.headers);
       const rl = checkRateLimit(`live-analyze:${ip}`, 20, 10 * 60 * 1000);
       if (!rl.allowed) {
         return NextResponse.json(
           {
             error: `Rate limit reached for live Steam lookups. Try again in ${rl.resetInSeconds}s.`,
           },
-          { status: 429 }
+          { status: 429, headers: { "Retry-After": String(rl.resetInSeconds) } }
         );
       }
 
-      const [liveActive, liveWaitlist] = await Promise.all([
+      const [
+        { libraries: liveActive, warnings: activeWarnings },
+        { libraries: liveWaitlist, warnings: waitlistWarnings },
+      ] = await Promise.all([
         fetchMemberLibrariesLive(activeInputs, region, apiKey),
         waitlistInputs.length > 0
           ? fetchMemberLibrariesLive(waitlistInputs, region, apiKey)
-          : Promise.resolve([]),
+          : Promise.resolve({
+              libraries: [] as MemberLibrary[],
+              warnings: [] as MemberLookupWarning[],
+            }),
       ]);
+
       activeLibraries = liveActive;
       waitlistLibraries = liveWaitlist;
+      warnings = [...activeWarnings, ...waitlistWarnings];
+
+      if (activeLibraries.length === 0) {
+        const failureSummary = activeWarnings
+          .map((w) => `${w.memberName}: ${w.reason}`)
+          .join("; ");
+        return NextResponse.json(
+          {
+            error: failureSummary
+              ? `Could not load any active Steam profiles: ${failureSummary}`
+              : "Could not load any active Steam profiles. Verify the Steam IDs/URLs and ensure Game Details are set to Public.",
+            warnings,
+          },
+          { status: 400 }
+        );
+      }
     } else {
       activeLibraries = buildDemoLibraries(activeInputs, region);
       waitlistLibraries = buildDemoLibraries(waitlistInputs, region);
@@ -94,6 +116,7 @@ export async function POST(req: NextRequest) {
       analysis,
       activeLibraries,
       waitlistLibraries,
+      warnings,
     });
   } catch (err) {
     const message =

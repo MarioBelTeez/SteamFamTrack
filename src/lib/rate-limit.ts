@@ -6,7 +6,20 @@ interface RateWindow {
 const buckets = new Map<string, RateWindow>();
 
 /**
- * Simple fixed-window in-memory rate limiter for protecting Steam API quota on public routes.
+ * Extracts a best-effort client IP from Cloudflare / reverse-proxy headers.
+ */
+export function getClientIp(headers: Headers): string {
+  const cfIp = headers.get("cf-connecting-ip")?.trim();
+  if (cfIp) return cfIp;
+
+  const forwarded = headers.get("x-forwarded-for")?.split(",")[0]?.trim();
+  if (forwarded) return forwarded;
+
+  return "local";
+}
+
+/**
+ * Simple fixed-window in-memory rate limiter for protecting Steam API quota and write routes.
  */
 export function checkRateLimit(
   key: string,
@@ -14,6 +27,15 @@ export function checkRateLimit(
   windowMs: number = 10 * 60 * 1000
 ): { allowed: boolean; remaining: number; resetInSeconds: number } {
   const now = Date.now();
+
+  if (buckets.size > 500) {
+    for (const [bucketKey, window] of buckets) {
+      if (window.resetAt <= now) {
+        buckets.delete(bucketKey);
+      }
+    }
+  }
+
   const existing = buckets.get(key);
 
   if (!existing || existing.resetAt <= now) {

@@ -45,6 +45,13 @@ export interface MemberLibrary {
   excludedCount: number;
 }
 
+export interface MemberLookupWarning {
+  memberId: string;
+  memberName: string;
+  steamInput: string;
+  reason: string;
+}
+
 export interface SlotCooldownStatus {
   joinDate: string | null;
   slotUnlockDate: string | null;

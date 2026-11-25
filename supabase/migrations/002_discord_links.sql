@@ -8,4 +8,5 @@ CREATE TABLE IF NOT EXISTS steamfam.discord_links (
 
 ALTER TABLE steamfam.discord_links ENABLE ROW LEVEL SECURITY;
 
+REVOKE ALL ON TABLE steamfam.discord_links FROM anon, authenticated;
 GRANT ALL ON TABLE steamfam.discord_links TO service_role;

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 import { getSteamFamDb, verifyEditKey } from "@/lib/supabase";
 import { FamilyAnalysis, STEAM_REGIONS } from "@/lib/types";
 
@@ -21,6 +22,17 @@ export async function POST(req: NextRequest, context: RouteContext) {
   }
 
   const { slug } = await context.params;
+  const ip = getClientIp(req.headers);
+  const rl = checkRateLimit(`snapshot:${ip}:${slug}`, 20, 15 * 60 * 1000);
+  if (!rl.allowed) {
+    return NextResponse.json(
+      {
+        error: `Too many snapshot requests. Try again in ${rl.resetInSeconds}s.`,
+      },
+      { status: 429, headers: { "Retry-After": String(rl.resetInSeconds) } }
+    );
+  }
+
   const editKey = req.headers.get("x-edit-key")?.trim() ?? "";
   if (!editKey) {
     return NextResponse.json(
@@ -56,8 +68,20 @@ export async function POST(req: NextRequest, context: RouteContext) {
       );
     }
 
+    if (body.snapshotMonth !== undefined && body.snapshotMonth !== "") {
+      if (
+        typeof body.snapshotMonth !== "string" ||
+        !/^\d{4}-(0[1-9]|1[0-2])$/.test(body.snapshotMonth)
+      ) {
+        return NextResponse.json(
+          { error: "snapshotMonth must be in YYYY-MM format." },
+          { status: 400 }
+        );
+      }
+    }
+
     const monthKey =
-      body.snapshotMonth && /^\d{4}-\d{2}$/.test(body.snapshotMonth)
+      body.snapshotMonth && body.snapshotMonth.length > 0
         ? body.snapshotMonth
         : new Date().toISOString().slice(0, 7);
 
