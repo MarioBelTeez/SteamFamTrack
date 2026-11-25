@@ -1,13 +1,39 @@
 "use client";
 
-import { FamilyAnalysis } from "@/lib/types";
-import { Award, CheckCircle2, Clock, Layers, Library, Scale, ShieldAlert } from "lucide-react";
+import { useMemo, useState } from "react";
+import { FamilyAnalysis, MemberContribution } from "@/lib/types";
+import {
+  ArrowDown,
+  ArrowUp,
+  ArrowUpDown,
+  Award,
+  CheckCircle2,
+  Clock,
+  Crosshair,
+  Layers,
+  Library,
+  Scale,
+  ShieldAlert,
+} from "lucide-react";
 
 interface ContributionBoardProps {
   analysis: FamilyAnalysis;
 }
 
+type SortKey =
+  | "totalGames"
+  | "exclusiveGames"
+  | "sharedGames"
+  | "totalRawValue"
+  | "exclusiveValue"
+  | "sharePercent";
+
+type SortDirection = "desc" | "asc";
+
 export function ContributionBoard({ analysis }: ContributionBoardProps) {
+  const [sortKey, setSortKey] = useState<SortKey>("totalRawValue");
+  const [sortDir, setSortDir] = useState<SortDirection>("desc");
+
   const sym = analysis.currencySymbol;
   const top = analysis.members[0];
 
@@ -22,267 +48,649 @@ export function ContributionBoard({ analysis }: ContributionBoardProps) {
   };
 
   const formatSignedMoney = (val: number) => {
-    const sign = val >= 0 ? "+" : "-";
+    if (Math.abs(val) < 0.005) {
+      return formatMoney(0);
+    }
+    const sign = val > 0 ? "+" : "-";
     return `${sign}${formatMoney(Math.abs(val))}`;
   };
 
+  const handleSort = (key: SortKey) => {
+    if (sortKey === key) {
+      setSortDir((prev) => (prev === "desc" ? "asc" : "desc"));
+    } else {
+      setSortKey(key);
+      setSortDir("desc");
+    }
+  };
+
+  const sortedMembers = useMemo(() => {
+    const list = [...analysis.members];
+    list.sort((a: MemberContribution, b: MemberContribution) => {
+      const diff = a[sortKey] - b[sortKey];
+      return sortDir === "desc" ? -diff : diff;
+    });
+    return list;
+  }, [analysis.members, sortKey, sortDir]);
+
+  const upNextMember = useMemo(
+    () =>
+      analysis.fairness.members.find(
+        (m) => m.isUpNext || m.memberId === analysis.fairness.upNextMemberId
+      ) ?? null,
+    [analysis.fairness]
+  );
+
+  const maxAbsDelta = useMemo(() => {
+    if (analysis.fairness.members.length === 0) return 1;
+    return Math.max(
+      1,
+      ...analysis.fairness.members.map((m) => Math.abs(m.deltaFromAverageValue))
+    );
+  }, [analysis.fairness.members]);
+
+  const renderSortIcon = (key: SortKey) => {
+    if (sortKey !== key) {
+      return <ArrowUpDown className="h-3 w-3 text-bt-dim" aria-hidden="true" />;
+    }
+    return sortDir === "desc" ? (
+      <ArrowDown className="h-3 w-3 text-bt-red" aria-hidden="true" />
+    ) : (
+      <ArrowUp className="h-3 w-3 text-bt-red" aria-hidden="true" />
+    );
+  };
+
+  const topMemberId = top?.memberId ?? null;
+
   return (
     <div className="space-y-6">
-      {/* KPI Cards */}
+      {/* 1. Top KPI Telemetry Strip */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <div className="rounded-xl border border-slate-800 bg-slate-900/70 p-4">
-          <div className="flex items-center justify-between text-xs font-medium uppercase tracking-wider text-slate-400">
-            <span>Unique Catalog</span>
-            <Library className="h-4 w-4 text-sky-400" />
-          </div>
-          <div className="mt-2 text-2xl font-bold text-white">
-            {analysis.uniqueGamesCount} games
-          </div>
-          <div className="mt-1 text-sm text-sky-300 font-mono">
-            {formatMoney(analysis.uniqueCatalogValue)} raw value
+        {/* 01 // UNIQUE CATALOG */}
+        <div className="p5-frame p5-frame-interactive bg-bt-border">
+          <div className="bg-bt-surface p-5 h-full flex flex-col justify-between gap-4">
+            <div className="flex items-center justify-between gap-2">
+              <span className="font-mono text-[11px] uppercase tracking-[0.16em] text-bt-muted">
+                01 // UNIQUE CATALOG
+              </span>
+              <Library className="h-4 w-4 text-bt-red shrink-0" aria-hidden="true" />
+            </div>
+
+            <div className="flex items-baseline gap-2">
+              <span className="font-display text-4xl xl:text-[42px] leading-none tracking-wide text-white tabular-nums">
+                {analysis.uniqueGamesCount.toLocaleString()}
+              </span>
+              <span className="font-display text-2xl leading-none tracking-wider text-bt-muted">
+                GAMES
+              </span>
+            </div>
+
+            <div className="border-t border-bt-border/80 pt-2.5 flex items-baseline justify-between gap-2 font-mono text-sm tabular-nums">
+              <span className="font-medium text-bt-red">
+                {formatMoney(analysis.uniqueCatalogValue)}
+              </span>
+              <span className="text-[11px] uppercase tracking-[0.14em] text-bt-muted">
+                RAW VALUE
+              </span>
+            </div>
           </div>
         </div>
 
-        <div className="rounded-xl border border-slate-800 bg-slate-900/70 p-4">
-          <div className="flex items-center justify-between text-xs font-medium uppercase tracking-wider text-slate-400">
-            <span>Sum of All Copies</span>
-            <Layers className="h-4 w-4 text-indigo-400" />
-          </div>
-          <div className="mt-2 text-2xl font-bold text-white">
-            {analysis.sumCopiesCount} copies
-          </div>
-          <div className="mt-1 text-sm text-slate-400 font-mono">
-            {formatMoney(analysis.sumCopiesValue)} total
+        {/* 02 // TOTAL COPIES */}
+        <div className="p5-frame p5-frame-interactive bg-bt-border">
+          <div className="bg-bt-surface p-5 h-full flex flex-col justify-between gap-4">
+            <div className="flex items-center justify-between gap-2">
+              <span className="font-mono text-[11px] uppercase tracking-[0.16em] text-bt-muted">
+                02 // TOTAL COPIES
+              </span>
+              <Layers className="h-4 w-4 text-white/80 shrink-0" aria-hidden="true" />
+            </div>
+
+            <div className="flex items-baseline gap-2">
+              <span className="font-display text-4xl xl:text-[42px] leading-none tracking-wide text-white tabular-nums">
+                {analysis.sumCopiesCount.toLocaleString()}
+              </span>
+              <span className="font-display text-2xl leading-none tracking-wider text-bt-muted">
+                COPIES
+              </span>
+            </div>
+
+            <div className="border-t border-bt-border/80 pt-2.5 flex items-baseline justify-between gap-2 font-mono text-sm tabular-nums">
+              <span className="font-medium text-white">
+                {formatMoney(analysis.sumCopiesValue)}
+              </span>
+              <span className="text-[11px] uppercase tracking-[0.14em] text-bt-muted">
+                GROSS TOTAL
+              </span>
+            </div>
           </div>
         </div>
 
-        <div className="rounded-xl border border-slate-800 bg-slate-900/70 p-4">
-          <div className="flex items-center justify-between text-xs font-medium uppercase tracking-wider text-slate-400">
-            <span>Top Contributor</span>
-            <Award className="h-4 w-4 text-lime-400" />
-          </div>
-          <div className="mt-2 text-2xl font-bold text-white truncate">
-            {top ? top.name : "—"}
-          </div>
-          <div className="mt-1 text-sm text-lime-400 font-mono">
-            {top ? `${top.sharePercent.toFixed(1)}% · ${formatMoney(top.totalRawValue)}` : "—"}
+        {/* 03 // TOP CONTRIBUTOR (Highlighted Crimson Frame) */}
+        <div className="p5-frame p5-frame-interactive bg-bt-red">
+          <div className="bg-bt-surface p-5 h-full flex flex-col justify-between gap-4 bg-gradient-to-br from-bt-red/15 via-bt-surface to-bt-surface">
+            <div className="flex items-center justify-between gap-2">
+              <span className="font-mono text-[11px] uppercase tracking-[0.16em] text-white/90">
+                03 // TOP CONTRIBUTOR
+              </span>
+              <Award className="h-4 w-4 text-bt-red shrink-0" aria-hidden="true" />
+            </div>
+
+            <div
+              className="font-display text-4xl xl:text-[42px] leading-none tracking-wide text-white truncate"
+              title={top ? top.name : undefined}
+            >
+              {top ? top.name : "—"}
+            </div>
+
+            <div className="border-t border-bt-red/30 pt-2.5 flex items-baseline justify-between gap-2 font-mono text-sm tabular-nums">
+              <span className="font-semibold text-bt-red">
+                {top ? `${top.sharePercent.toFixed(1)}% SHARE` : "—"}
+              </span>
+              <span className="font-medium text-white">
+                {top ? formatMoney(top.totalRawValue) : "—"}
+              </span>
+            </div>
           </div>
         </div>
 
-        <div className="rounded-xl border border-slate-800 bg-slate-900/70 p-4">
-          <div className="flex items-center justify-between text-xs font-medium uppercase tracking-wider text-slate-400">
-            <span>Sharing Excluded</span>
-            <ShieldAlert className="h-4 w-4 text-amber-400" />
-          </div>
-          <div className="mt-2 text-2xl font-bold text-white">
-            {analysis.excludedGamesCount} copies
-          </div>
-          <div className="mt-1 text-xs text-slate-400">
-            Publisher opted out of Family Sharing
-          </div>
-        </div>
-      </div>
+        {/* 04 // SHARING EXCLUDED */}
+        <div className="p5-frame p5-frame-interactive bg-bt-border">
+          <div className="bg-bt-surface p-5 h-full flex flex-col justify-between gap-4">
+            <div className="flex items-center justify-between gap-2">
+              <span className="font-mono text-[11px] uppercase tracking-[0.16em] text-bt-muted">
+                04 // SHARING EXCLUDED
+              </span>
+              <ShieldAlert className="h-4 w-4 text-amber-400 shrink-0" aria-hidden="true" />
+            </div>
 
-      {/* Leaderboard Table */}
-      <div className="rounded-xl border border-slate-800 bg-slate-900/70 overflow-hidden">
-        <div className="border-b border-slate-800 px-5 py-4 flex flex-wrap items-center justify-between gap-2">
-          <div>
-            <h2 className="text-base font-semibold text-white">
-              Member Contribution Breakdown
-            </h2>
-            <p className="text-xs text-slate-400">
-              Ranked by raw non-discounted regional store value ({analysis.region.toUpperCase()})
-            </p>
-          </div>
-          <span className="text-xs text-slate-400">
-            {analysis.members.length} / 6 Steam Family slots used
-          </span>
-        </div>
+            <div className="flex items-baseline gap-2">
+              <span className="font-display text-4xl xl:text-[42px] leading-none tracking-wide text-white tabular-nums">
+                {analysis.excludedGamesCount.toLocaleString()}
+              </span>
+              <span className="font-display text-2xl leading-none tracking-wider text-bt-muted">
+                EXCLUDED
+              </span>
+            </div>
 
-        <div className="overflow-x-auto">
-          <table className="w-full text-left text-sm">
-            <thead className="bg-slate-950/60 text-xs uppercase tracking-wider text-slate-400">
-              <tr>
-                <th className="px-5 py-3">#</th>
-                <th className="px-5 py-3">Member</th>
-                <th className="px-4 py-3 text-right">Total</th>
-                <th className="px-4 py-3 text-right">Exclusive</th>
-                <th className="px-4 py-3 text-right">Shared</th>
-                <th className="px-4 py-3 text-right">Raw Value</th>
-                <th className="px-4 py-3 text-right">Excl. Value</th>
-                <th className="px-5 py-3 min-w-[170px]">Contribution Share</th>
-                <th className="px-5 py-3">1-Yr Slot Status</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-800/80">
-              {analysis.members.map((m, idx) => (
-                <tr
-                  key={m.memberId}
-                  className="hover:bg-slate-800/40 transition-colors"
-                >
-                  <td className="px-5 py-3.5 font-mono text-slate-400">
-                    {idx + 1}
-                  </td>
-                  <td className="px-5 py-3.5">
-                    <div className="flex items-center gap-3">
-                      {m.avatarUrl ? (
-                        // eslint-disable-next-line @next/next/no-img-element
-                        <img
-                          src={m.avatarUrl}
-                          alt={m.name}
-                          className="h-8 w-8 rounded-md border border-slate-700 object-cover"
-                        />
-                      ) : (
-                        <div className="h-8 w-8 rounded-md border border-slate-700 bg-slate-800 flex items-center justify-center text-xs font-bold text-sky-400">
-                          {m.name.slice(0, 2).toUpperCase()}
-                        </div>
-                      )}
-                      <div>
-                        <div className="font-medium text-white">{m.name}</div>
-                        <div className="text-xs text-slate-400 truncate max-w-[160px]">
-                          {m.personaName !== m.name ? m.personaName : m.steamId64}
-                        </div>
-                      </div>
-                    </div>
-                  </td>
-                  <td className="px-4 py-3.5 text-right font-mono text-slate-200">
-                    {m.totalGames}
-                  </td>
-                  <td className="px-4 py-3.5 text-right font-mono text-sky-300">
-                    {m.exclusiveGames}
-                  </td>
-                  <td className="px-4 py-3.5 text-right font-mono text-slate-400">
-                    {m.sharedGames}
-                  </td>
-                  <td className="px-4 py-3.5 text-right font-mono font-semibold text-white">
-                    {formatMoney(m.totalRawValue)}
-                  </td>
-                  <td className="px-4 py-3.5 text-right font-mono text-slate-300">
-                    {formatMoney(m.exclusiveValue)}
-                  </td>
-                  <td className="px-5 py-3.5">
-                    <div className="flex items-center gap-2.5">
-                      <div className="h-2 flex-1 rounded-full bg-slate-800 overflow-hidden">
-                        <div
-                          className="h-full rounded-full bg-gradient-to-r from-sky-500 to-lime-400"
-                          style={{ width: `${Math.min(100, m.sharePercent)}%` }}
-                        />
-                      </div>
-                      <span className="w-12 text-right font-mono text-xs font-semibold text-white">
-                        {m.sharePercent.toFixed(1)}%
-                      </span>
-                    </div>
-                  </td>
-                  <td className="px-5 py-3.5">
-                    {m.cooldown.isSlotUnlocked ? (
-                      <span className="inline-flex items-center gap-1.5 rounded-full bg-lime-500/10 px-2.5 py-1 text-xs font-medium text-lime-400 border border-lime-500/20">
-                        <CheckCircle2 className="h-3.5 w-3.5" />
-                        Unlocked
-                      </span>
-                    ) : (
-                      <span
-                        title={`Joined ${m.cooldown.joinDate} · Unlocks ${m.cooldown.slotUnlockDate}`}
-                        className="inline-flex items-center gap-1.5 rounded-full bg-amber-500/10 px-2.5 py-1 text-xs font-medium text-amber-300 border border-amber-500/20"
-                      >
-                        <Clock className="h-3.5 w-3.5" />
-                        {m.cooldown.daysUntilUnlock}d ({m.cooldown.slotUnlockDate})
-                      </span>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+            <div className="border-t border-bt-border/80 pt-2.5 font-mono text-[11px] uppercase tracking-[0.12em] text-bt-muted">
+              Publisher opted out of Family Sharing
+            </div>
+          </div>
         </div>
       </div>
 
-      {/* Fairness Meter */}
-      <div className="rounded-xl border border-slate-800 bg-slate-900/70 p-5 space-y-4">
-        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 pb-4">
-          <div className="flex items-center gap-2.5">
-            <Scale className="h-5 w-5 text-sky-400" />
-            <div>
-              <h2 className="text-base font-semibold text-white">
-                Fairness Meter
-              </h2>
-              <p className="text-xs text-slate-400">
-                Group avg: <span className="font-mono text-slate-200">{formatMoney(analysis.fairness.averageRawValue)}</span> · Equal-share target:{" "}
-                <span className="font-mono text-slate-200">{analysis.fairness.expectedSharePercent.toFixed(1)}%</span>
-              </p>
+      {/* 2. Member Contribution Leaderboard */}
+      <div className="p5-frame bg-bt-border">
+        <div className="bg-bt-surface">
+          {/* Header Bar */}
+          <div className="border-b border-bt-border bg-bt-elevated/70 px-5 py-4 flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-3.5">
+              <div className="w-1 h-9 bg-bt-red shrink-0" aria-hidden="true" />
+              <div>
+                <h2 className="font-condensed text-xl font-bold uppercase tracking-wider text-white leading-tight">
+                  Member Contribution Breakdown
+                </h2>
+                <p className="mt-0.5 font-mono text-[11px] uppercase tracking-[0.14em] text-bt-muted">
+                  Raw non-discounted regional store value{" "}
+                  <span className="text-white">
+                    [{analysis.region.toUpperCase()} · {sym}]
+                  </span>
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-3">
+              <span className="p5-tag inline-flex items-center bg-bt-red px-3 py-1 text-white">
+                <span className="p5-unskew font-mono text-xs font-bold uppercase tracking-[0.14em] tabular-nums">
+                  {analysis.members.length} / 6 SLOTS
+                </span>
+              </span>
             </div>
           </div>
 
-          {analysis.fairness.upNextMemberName && (
-            <div className="inline-flex items-center gap-2 rounded-full border border-amber-500/30 bg-amber-500/10 px-3 py-1 text-xs font-medium text-amber-300">
-              <span>Up Next to Contribute:</span>
-              <span className="font-semibold text-white">
-                {analysis.fairness.upNextMemberName}
+          {/* Editorial Telemetry Data Table */}
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-sm border-collapse">
+              <thead className="bg-bt-bg border-b border-bt-border font-mono text-[11px] uppercase tracking-[0.12em] text-bt-muted">
+                <tr>
+                  <th className="px-3.5 py-3.5 font-medium w-12">#</th>
+                  <th className="px-3.5 py-3.5 font-medium">Member</th>
+                  <th className="px-2.5 py-3.5 text-right font-medium">
+                    <button
+                      type="button"
+                      onClick={() => handleSort("totalGames")}
+                      className="inline-flex items-center gap-1 uppercase tracking-[0.12em] hover:text-white transition-colors cursor-pointer"
+                    >
+                      <span>Total</span>
+                      {renderSortIcon("totalGames")}
+                    </button>
+                  </th>
+                  <th className="px-2.5 py-3.5 text-right font-medium">
+                    <button
+                      type="button"
+                      onClick={() => handleSort("exclusiveGames")}
+                      className="inline-flex items-center gap-1 uppercase tracking-[0.12em] hover:text-white transition-colors cursor-pointer"
+                    >
+                      <span>Excl.</span>
+                      {renderSortIcon("exclusiveGames")}
+                    </button>
+                  </th>
+                  <th className="px-2.5 py-3.5 text-right font-medium">
+                    <button
+                      type="button"
+                      onClick={() => handleSort("sharedGames")}
+                      className="inline-flex items-center gap-1 uppercase tracking-[0.12em] hover:text-white transition-colors cursor-pointer"
+                    >
+                      <span>Shared</span>
+                      {renderSortIcon("sharedGames")}
+                    </button>
+                  </th>
+                  <th className="px-2.5 py-3.5 text-right font-medium whitespace-nowrap">
+                    <button
+                      type="button"
+                      onClick={() => handleSort("totalRawValue")}
+                      className="inline-flex items-center gap-1 uppercase tracking-[0.12em] hover:text-white transition-colors cursor-pointer"
+                    >
+                      <span>Raw Value</span>
+                      {renderSortIcon("totalRawValue")}
+                    </button>
+                  </th>
+                  <th className="px-2.5 py-3.5 text-right font-medium whitespace-nowrap">
+                    <button
+                      type="button"
+                      onClick={() => handleSort("exclusiveValue")}
+                      className="inline-flex items-center gap-1 uppercase tracking-[0.12em] hover:text-white transition-colors cursor-pointer"
+                    >
+                      <span>Excl. Val</span>
+                      {renderSortIcon("exclusiveValue")}
+                    </button>
+                  </th>
+                  <th className="px-3.5 py-3.5 min-w-[140px] font-medium whitespace-nowrap">
+                    <button
+                      type="button"
+                      onClick={() => handleSort("sharePercent")}
+                      className="inline-flex items-center gap-1 uppercase tracking-[0.12em] hover:text-white transition-colors cursor-pointer"
+                    >
+                      <span>Share</span>
+                      {renderSortIcon("sharePercent")}
+                    </button>
+                  </th>
+                  <th className="px-3.5 py-3.5 font-medium whitespace-nowrap">
+                    Slot Status
+                  </th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-bt-border/80">
+                {sortedMembers.map((m, idx) => {
+                  const isRankOne = idx === 0;
+                  const isTopContributor = m.memberId === topMemberId;
+                  const rankDisplay = String(idx + 1).padStart(2, "0");
+
+                  return (
+                    <tr
+                      key={m.memberId}
+                      className={`hover:bg-bt-elevated/90 transition-colors ${
+                        isTopContributor ? "bg-bt-red/[0.04]" : ""
+                      }`}
+                    >
+                      {/* Rank */}
+                      <td className="px-3.5 py-3.5">
+                        <span
+                          className={`font-display text-2xl leading-none tracking-wider tabular-nums ${
+                            isRankOne ? "text-bt-red" : "text-bt-muted"
+                          }`}
+                        >
+                          {rankDisplay}
+                        </span>
+                      </td>
+
+                      {/* Member */}
+                      <td className="px-3.5 py-3.5">
+                        <div className="flex items-center gap-2.5">
+                          {m.avatarUrl ? (
+                            // eslint-disable-next-line @next/next/no-img-element
+                            <img
+                              src={m.avatarUrl}
+                              alt={m.name}
+                              className={`h-8 w-8 shrink-0 object-cover border ${
+                                isTopContributor
+                                  ? "border-bt-red"
+                                  : "border-bt-border"
+                              }`}
+                            />
+                          ) : (
+                            <div
+                              className={`h-8 w-8 shrink-0 border bg-bt-elevated flex items-center justify-center font-display text-sm tracking-wider ${
+                                isTopContributor
+                                  ? "border-bt-red text-bt-red"
+                                  : "border-bt-border text-white"
+                              }`}
+                            >
+                              {m.name.slice(0, 2).toUpperCase()}
+                            </div>
+                          )}
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-2">
+                              <span className="font-condensed text-base font-bold uppercase tracking-wide text-white truncate">
+                                {m.name}
+                              </span>
+                              {isTopContributor && (
+                                <span className="p5-tag inline-flex items-center bg-bt-red px-1.5 py-0.5 text-white shrink-0">
+                                  <span className="p5-unskew font-mono text-[9px] font-bold uppercase tracking-[0.14em]">
+                                    LEAD
+                                  </span>
+                                </span>
+                              )}
+                            </div>
+                            <div className="font-mono text-[11px] text-bt-muted truncate max-w-[140px]">
+                              {m.personaName !== m.name
+                                ? m.personaName
+                                : m.steamId64}
+                            </div>
+                          </div>
+                        </div>
+                      </td>
+
+                      {/* Total */}
+                      <td className="px-2.5 py-3.5 text-right font-mono text-sm tabular-nums text-white/90">
+                        {m.totalGames.toLocaleString()}
+                      </td>
+
+                      {/* Exclusive */}
+                      <td className="px-2.5 py-3.5 text-right font-mono text-sm tabular-nums font-medium text-bt-red">
+                        {m.exclusiveGames.toLocaleString()}
+                      </td>
+
+                      {/* Shared */}
+                      <td className="px-2.5 py-3.5 text-right font-mono text-sm tabular-nums text-bt-muted">
+                        {m.sharedGames.toLocaleString()}
+                      </td>
+
+                      {/* Raw Value */}
+                      <td className="px-2.5 py-3.5 text-right font-mono text-sm tabular-nums font-semibold text-white whitespace-nowrap">
+                        {formatMoney(m.totalRawValue)}
+                      </td>
+
+                      {/* Excl. Value */}
+                      <td className="px-2.5 py-3.5 text-right font-mono text-sm tabular-nums text-bt-muted whitespace-nowrap">
+                        {formatMoney(m.exclusiveValue)}
+                      </td>
+
+                      {/* Contribution Share */}
+                      <td className="px-3.5 py-3.5">
+                        <div className="flex items-center gap-2">
+                          <div className="h-2.5 flex-1 bg-bt-bg border border-bt-border/80 overflow-hidden">
+                            <div
+                              className={`h-full transition-all duration-300 ${
+                                isTopContributor
+                                  ? "bg-bt-red"
+                                  : idx === 1
+                                    ? "bg-white/90"
+                                    : "bg-white/65"
+                              }`}
+                              style={{
+                                width: `${Math.min(100, Math.max(0, m.sharePercent))}%`,
+                              }}
+                            />
+                          </div>
+                          <span
+                            className={`w-11 text-right font-mono text-xs font-bold tabular-nums ${
+                              isTopContributor ? "text-bt-red" : "text-white"
+                            }`}
+                          >
+                            {m.sharePercent.toFixed(1)}%
+                          </span>
+                        </div>
+                      </td>
+
+                      {/* 1-Yr Slot Status */}
+                      <td className="px-3.5 py-3.5 whitespace-nowrap">
+                        {m.cooldown.isSlotUnlocked ? (
+                          <span className="inline-flex items-center gap-1.5 border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-1 font-mono text-[11px] font-medium uppercase tracking-wider text-emerald-400">
+                            <CheckCircle2 className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                            <span>Unlocked</span>
+                          </span>
+                        ) : (
+                          <span
+                            title={`Joined ${m.cooldown.joinDate} · Unlocks ${m.cooldown.slotUnlockDate}`}
+                            className="inline-flex items-center gap-1.5 border border-amber-500/30 bg-amber-500/10 px-2.5 py-1 font-mono text-[11px] font-medium uppercase tracking-wider text-amber-300 tabular-nums"
+                          >
+                            <Clock className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                            <span>
+                              {m.cooldown.daysUntilUnlock}d ·{" "}
+                              {m.cooldown.slotUnlockDate}
+                            </span>
+                          </span>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      {/* 3. Fairness Meter ("Who's Up Next to Contribute") */}
+      <div className="p5-frame bg-bt-border">
+        <div className="bg-bt-surface">
+          {/* Header */}
+          <div className="border-b border-bt-border bg-bt-elevated/70 px-5 py-4 flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-3.5">
+              <div className="w-1 h-9 bg-bt-red shrink-0" aria-hidden="true" />
+              <div className="flex items-center gap-2.5">
+                <Scale className="h-5 w-5 text-bt-red shrink-0" aria-hidden="true" />
+                <div>
+                  <h2 className="font-condensed text-xl font-bold uppercase tracking-wider text-white leading-tight">
+                    Fairness Meter
+                  </h2>
+                  <p className="mt-0.5 font-mono text-[11px] uppercase tracking-[0.14em] text-bt-muted">
+                    Deviation from group average · equal-share balance telemetry
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* Axis Legend */}
+            <div className="flex flex-wrap items-center gap-4 font-mono text-[11px] uppercase tracking-[0.12em] text-bt-muted">
+              <span className="inline-flex items-center gap-1.5">
+                <span className="h-2.5 w-2.5 bg-bt-red inline-block" aria-hidden="true" />
+                Below Avg
               </span>
+              <span className="inline-flex items-center gap-1.5">
+                <span className="h-2.5 w-2.5 bg-emerald-400 inline-block" aria-hidden="true" />
+                Above Avg
+              </span>
+            </div>
+          </div>
+
+          {analysis.fairness.members.length === 0 ? (
+            <div className="p-5 font-mono text-sm text-bt-muted">
+              No active members to compare.
+            </div>
+          ) : (
+            <div className="p-5 grid grid-cols-1 lg:grid-cols-[290px_1fr] gap-5">
+              {/* Left Spotlight Callout */}
+              <div className="bg-bt-red/10 border border-bt-red/30 border-l-4 border-l-bt-red p-5 flex flex-col justify-between gap-5">
+                <div className="space-y-3">
+                  <div className="p5-tag inline-flex items-center bg-bt-red px-2.5 py-1 text-white">
+                    <span className="p5-unskew inline-flex items-center gap-1.5 font-mono text-[10px] font-bold uppercase tracking-[0.16em]">
+                      <Crosshair className="h-3 w-3" aria-hidden="true" />
+                      UP NEXT TO BUY / ADD
+                    </span>
+                  </div>
+
+                  <div>
+                    <div
+                      className="font-display text-3xl xl:text-4xl leading-none tracking-wide text-white truncate"
+                      title={analysis.fairness.upNextMemberName ?? undefined}
+                    >
+                      {analysis.fairness.upNextMemberName ?? "BALANCED"}
+                    </div>
+
+                    {upNextMember ? (
+                      <div className="mt-2 space-y-1 font-mono tabular-nums">
+                        <div className="text-sm font-bold text-bt-red">
+                          {formatSignedMoney(upNextMember.deltaFromAverageValue)}{" "}
+                          <span className="text-[11px] font-normal uppercase tracking-wider text-bt-muted">
+                            vs. avg
+                          </span>
+                        </div>
+                        <div className="text-xs text-bt-muted">
+                          Current share:{" "}
+                          <span className="text-white font-medium">
+                            {upNextMember.sharePercent.toFixed(1)}%
+                          </span>{" "}
+                          of{" "}
+                          <span className="text-white font-medium">
+                            {analysis.fairness.expectedSharePercent.toFixed(1)}%
+                          </span>{" "}
+                          target
+                        </div>
+                      </div>
+                    ) : (
+                      <p className="mt-2 font-mono text-xs text-bt-muted">
+                        All members are currently at equal contribution.
+                      </p>
+                    )}
+                  </div>
+                </div>
+
+                <div className="border-t border-bt-red/25 pt-4 grid grid-cols-2 gap-3">
+                  <div>
+                    <div className="font-mono text-[10px] uppercase tracking-[0.16em] text-bt-muted">
+                      Group Avg
+                    </div>
+                    <div className="mt-1 font-mono text-sm font-semibold text-white tabular-nums">
+                      {formatMoney(analysis.fairness.averageRawValue)}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="font-mono text-[10px] uppercase tracking-[0.16em] text-bt-muted">
+                      Equal Target
+                    </div>
+                    <div className="mt-1 font-mono text-sm font-semibold text-white tabular-nums">
+                      {analysis.fairness.expectedSharePercent.toFixed(1)}%
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Right Panel: Diverging Balance Bars */}
+              <div className="flex flex-col justify-between gap-3">
+                {/* Axis Scale Header */}
+                <div className="grid grid-cols-3 items-center px-1 font-mono text-[10px] uppercase tracking-[0.16em] text-bt-muted tabular-nums">
+                  <span className="text-left text-bt-red">
+                    &larr; Deficit ({formatSignedMoney(-maxAbsDelta)})
+                  </span>
+                  <span className="text-center text-white">
+                    AVG · {formatMoney(0)}
+                  </span>
+                  <span className="text-right text-emerald-400">
+                    Surplus ({formatSignedMoney(maxAbsDelta)}) &rarr;
+                  </span>
+                </div>
+
+                {/* Member Rows */}
+                <div className="space-y-2.5">
+                  {analysis.fairness.members.map((fm) => {
+                    const isNeutral = Math.abs(fm.deltaFromAverageValue) < 0.005;
+                    const isAhead = fm.deltaFromAverageValue > 0;
+                    const ratioPct = Math.min(
+                      100,
+                      (Math.abs(fm.deltaFromAverageValue) / maxAbsDelta) * 100
+                    );
+                    const visualWidth = isNeutral ? 0 : Math.max(3, ratioPct);
+
+                    return (
+                      <div
+                        key={fm.memberId}
+                        className={`border px-4 py-3 transition-colors ${
+                          fm.isUpNext
+                            ? "border-bt-red/50 bg-bt-red/[0.07]"
+                            : "border-bt-border/80 bg-bt-elevated/40 hover:bg-bt-elevated/75"
+                        }`}
+                      >
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <div className="flex items-center gap-2.5 min-w-0">
+                            <span className="font-condensed text-base font-bold uppercase tracking-wide text-white truncate">
+                              {fm.name}
+                            </span>
+                            {fm.isUpNext && (
+                              <span className="p5-tag inline-flex items-center bg-bt-red px-2 py-0.5 text-white shrink-0">
+                                <span className="p5-unskew font-mono text-[9px] font-bold uppercase tracking-[0.14em]">
+                                  UP NEXT
+                                </span>
+                              </span>
+                            )}
+                          </div>
+
+                          <div className="flex flex-wrap items-center gap-3 font-mono text-xs tabular-nums">
+                            <span className="text-bt-muted">
+                              {formatMoney(fm.totalRawValue)}{" "}
+                              <span className="text-bt-dim">|</span>{" "}
+                              <span className="text-white">
+                                {fm.sharePercent.toFixed(1)}%
+                              </span>
+                              <span className="text-bt-muted">
+                                /{fm.expectedSharePercent.toFixed(1)}%
+                              </span>
+                            </span>
+                            <span
+                              className={`min-w-[82px] text-right font-bold ${
+                                isNeutral
+                                  ? "text-white"
+                                  : isAhead
+                                    ? "text-emerald-400"
+                                    : "text-bt-red"
+                              }`}
+                            >
+                              {formatSignedMoney(fm.deltaFromAverageValue)}
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* Diverging Bar Track */}
+                        <div
+                          className="mt-2.5 relative grid grid-cols-2 h-3 w-full bg-bt-bg border border-bt-border/80"
+                          title={`${fm.name}: ${formatSignedMoney(fm.deltaFromAverageValue)} vs. ${formatMoney(analysis.fairness.averageRawValue)} average`}
+                        >
+                          {/* Left Half (Deficit -> extends left from center in BelTeez Red) */}
+                          <div className="flex justify-end h-full overflow-hidden">
+                            {!isNeutral && !isAhead && (
+                              <div
+                                className="h-full bg-bt-red transition-all duration-300"
+                                style={{ width: `${visualWidth}%` }}
+                              />
+                            )}
+                          </div>
+
+                          {/* Right Half (Surplus -> extends right from center in Emerald) */}
+                          <div className="flex justify-start h-full overflow-hidden">
+                            {!isNeutral && isAhead && (
+                              <div
+                                className="h-full bg-emerald-400 transition-all duration-300"
+                                style={{ width: `${visualWidth}%` }}
+                              />
+                            )}
+                          </div>
+
+                          {/* Center Zero-Axis Hairline */}
+                          <div
+                            className="pointer-events-none absolute inset-y-0 left-1/2 -translate-x-1/2 w-[2px] bg-white/80"
+                            aria-hidden="true"
+                          />
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
             </div>
           )}
         </div>
-
-        {analysis.fairness.members.length === 0 ? (
-          <p className="text-sm text-slate-400">No active members to compare.</p>
-        ) : (
-          <div className="space-y-3">
-            {analysis.fairness.members.map((fm) => {
-              const isAhead = fm.deltaFromAverageValue >= 0;
-              const barWidth =
-                fm.expectedSharePercent > 0
-                  ? Math.min(100, (fm.sharePercent / (fm.expectedSharePercent * 2)) * 100)
-                  : 0;
-
-              return (
-                <div
-                  key={fm.memberId}
-                  className={`rounded-lg border px-4 py-3 ${
-                    fm.isUpNext
-                      ? "border-amber-500/30 bg-amber-500/5"
-                      : "border-slate-800/80 bg-slate-950/40"
-                  }`}
-                >
-                  <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
-                    <div className="flex items-center gap-2">
-                      <span className="font-medium text-white">{fm.name}</span>
-                      {fm.isUpNext && (
-                        <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[11px] font-semibold text-amber-300 border border-amber-500/25">
-                          Up Next to Contribute
-                        </span>
-                      )}
-                    </div>
-
-                    <div className="flex items-center gap-3 font-mono text-xs">
-                      <span className="text-slate-400">
-                        {formatMoney(fm.totalRawValue)} ({fm.sharePercent.toFixed(1)}%)
-                      </span>
-                      <span
-                        className={`font-semibold ${
-                          isAhead ? "text-emerald-400" : "text-amber-400"
-                        }`}
-                      >
-                        {formatSignedMoney(fm.deltaFromAverageValue)}
-                      </span>
-                    </div>
-                  </div>
-
-                  <div className="mt-2 relative h-2 w-full rounded-full bg-slate-800 overflow-hidden">
-                    <div
-                      className={`h-full rounded-full ${
-                        isAhead ? "bg-emerald-500" : "bg-amber-400"
-                      }`}
-                      style={{ width: `${Math.max(2, barWidth)}%` }}
-                    />
-                    <div
-                      title={`Target: ${fm.expectedSharePercent.toFixed(1)}%`}
-                      className="absolute top-0 bottom-0 left-1/2 w-0.5 bg-slate-300/60"
-                    />
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
       </div>
     </div>
   );

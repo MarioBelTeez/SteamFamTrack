@@ -1,14 +1,32 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import {
+  Barlow_Condensed,
+  Bebas_Neue,
+  DM_Mono,
+  Inter,
+} from "next/font/google";
 import "./globals.css";
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
+const bebasNeue = Bebas_Neue({
+  weight: "400",
+  variable: "--font-display",
   subsets: ["latin"],
 });
 
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
+const barlowCondensed = Barlow_Condensed({
+  weight: ["400", "600", "700", "800"],
+  variable: "--font-condensed",
+  subsets: ["latin"],
+});
+
+const dmMono = DM_Mono({
+  weight: ["400", "500"],
+  variable: "--font-mono",
+  subsets: ["latin"],
+});
+
+const inter = Inter({
+  variable: "--font-sans",
   subsets: ["latin"],
 });
 
@@ -22,9 +40,9 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html
       lang="en"
-      className={`${geistSans.variable} ${geistMono.variable} h-full antialiased dark`}
+      className={`${bebasNeue.variable} ${barlowCondensed.variable} ${dmMono.variable} ${inter.variable} h-full dark`}
     >
-      <body className="min-h-full flex flex-col bg-[#0b111a] text-slate-100">
+      <body className="min-h-full flex flex-col bg-bt-bg text-white antialiased selection:bg-bt-red selection:text-white">
         {children}
       </body>
     </html>

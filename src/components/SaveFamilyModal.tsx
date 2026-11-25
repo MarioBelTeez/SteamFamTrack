@@ -2,7 +2,15 @@
 
 import { useState } from "react";
 import { FamilyAnalysis, FamilyMemberInput, SteamRegion } from "@/lib/types";
-import { Check, Copy, ExternalLink, KeyRound, Loader2, Share2, X } from "lucide-react";
+import {
+  Check,
+  Copy,
+  ExternalLink,
+  KeyRound,
+  Loader2,
+  Share2,
+  X,
+} from "lucide-react";
 
 interface SaveFamilyModalProps {
   isOpen: boolean;
@@ -86,153 +94,194 @@ export function SaveFamilyModal({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
-      <div className="w-full max-w-md rounded-2xl border border-slate-800 bg-slate-900 shadow-2xl overflow-hidden">
-        <div className="flex items-center justify-between border-b border-slate-800 px-5 py-4">
-          <div className="flex items-center gap-2">
-            <Share2 className="h-4 w-4 text-sky-400" />
-            <h2 className="text-base font-semibold text-white">
-              {created ? "Family Group Saved" : "Save & Share Steam Family"}
-            </h2>
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="save-family-title"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4"
+    >
+      <div className="p5-frame w-full max-w-md bg-bt-red/70 shadow-[0_24px_80px_rgba(0,0,0,0.85)]">
+        <div className="bg-bt-surface overflow-hidden">
+          <div className="h-[2px] w-full bg-bt-red" />
+
+          {/* Modal Header */}
+          <div className="flex items-center justify-between gap-3 border-b border-bt-border px-6 py-4">
+            <div className="flex items-center gap-2.5">
+              <Share2 className="h-4 w-4 text-bt-red shrink-0" />
+              <h2
+                id="save-family-title"
+                className="font-display text-2xl tracking-wider uppercase text-white leading-none"
+              >
+                {created ? "Family Group Saved" : "Save & Share Steam Family"}
+              </h2>
+            </div>
+            <button
+              type="button"
+              onClick={onClose}
+              aria-label="Close modal"
+              className="cursor-pointer border border-bt-border bg-bt-elevated p-1.5 text-bt-muted hover:border-bt-red hover:text-white transition-colors"
+            >
+              <X className="h-4 w-4" />
+            </button>
           </div>
-          <button
-            onClick={onClose}
-            className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-800 hover:text-white"
-          >
-            <X className="h-4 w-4" />
-          </button>
+
+          {created ? (
+            <div className="p-6 space-y-5">
+              <div className="border-y border-r border-emerald-500/30 border-l-4 border-l-emerald-400 bg-emerald-500/10 px-3.5 py-3 text-xs text-bt-muted">
+                Anyone with the link below can view your board and run swap
+                simulations. Store your{" "}
+                <strong className="text-white">Edit Passcode</strong> safely —
+                it is required to edit members or record monthly snapshots.
+              </div>
+
+              <div>
+                <label
+                  htmlFor="saved-share-url"
+                  className="mb-1.5 block font-condensed text-xs font-bold uppercase tracking-wider text-bt-muted"
+                >
+                  Shareable Link
+                </label>
+                <div className="flex items-center gap-2">
+                  <input
+                    id="saved-share-url"
+                    readOnly
+                    value={shareUrl}
+                    className="flex-1 border border-bt-border bg-bt-bg px-3 py-2 font-mono text-sm text-white focus:border-bt-red focus:outline-none"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => copyText(shareUrl, "url")}
+                    aria-label="Copy shareable link"
+                    className="cursor-pointer border border-bt-border bg-bt-elevated px-3 py-2.5 text-white hover:border-bt-red transition-colors"
+                  >
+                    {copiedField === "url" ? (
+                      <Check className="h-4 w-4 text-emerald-400" />
+                    ) : (
+                      <Copy className="h-4 w-4" />
+                    )}
+                  </button>
+                </div>
+              </div>
+
+              <div>
+                <label
+                  htmlFor="saved-edit-key"
+                  className="mb-1.5 block font-condensed text-xs font-bold uppercase tracking-wider text-amber-300"
+                >
+                  Edit Passcode (Shown Once)
+                </label>
+                <div className="flex items-center gap-2">
+                  <input
+                    id="saved-edit-key"
+                    readOnly
+                    value={created.editKey}
+                    className="flex-1 border border-amber-500/45 bg-amber-500/10 px-3 py-2 font-mono text-sm font-bold text-amber-200 focus:border-amber-400 focus:outline-none"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => copyText(created.editKey, "key")}
+                    aria-label="Copy edit passcode"
+                    className="cursor-pointer border border-bt-border bg-bt-elevated px-3 py-2.5 text-white hover:border-bt-red transition-colors"
+                  >
+                    {copiedField === "key" ? (
+                      <Check className="h-4 w-4 text-emerald-400" />
+                    ) : (
+                      <Copy className="h-4 w-4" />
+                    )}
+                  </button>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-end gap-3 border-t border-bt-border pt-4">
+                <button
+                  type="button"
+                  onClick={onClose}
+                  className="cursor-pointer border border-bt-border px-4 py-2 font-condensed text-xs font-bold uppercase tracking-widest text-bt-muted hover:border-white/40 hover:text-white transition-colors"
+                >
+                  Close
+                </button>
+                <a
+                  href={`/f/${created.slug}`}
+                  className="p5-btn cursor-pointer inline-flex items-center gap-1.5 bg-bt-red px-5 py-2 font-condensed text-xs font-bold uppercase tracking-widest text-white hover:bg-bt-red-hover transition-colors"
+                >
+                  Open Group Page
+                  <ExternalLink className="h-3.5 w-3.5" />
+                </a>
+              </div>
+            </div>
+          ) : (
+            <form onSubmit={handleSubmit} className="p-6 space-y-4">
+              <p className="text-xs text-bt-muted">
+                Creates a permanent shareable URL (
+                <span className="font-mono text-white">/f/your-group</span>)
+                backed by Supabase with monthly snapshot tracking.
+              </p>
+
+              <div>
+                <label
+                  htmlFor="family-group-name"
+                  className="mb-1.5 block font-condensed text-xs font-bold uppercase tracking-wider text-bt-muted"
+                >
+                  Family Group Name
+                </label>
+                <input
+                  id="family-group-name"
+                  type="text"
+                  required
+                  maxLength={60}
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  placeholder="e.g. Squad Steam Family"
+                  className="w-full border border-bt-border bg-bt-bg px-3 py-2.5 font-mono text-sm text-white placeholder:text-bt-dim focus:border-bt-red focus:outline-none"
+                />
+              </div>
+
+              <div>
+                <label
+                  htmlFor="family-edit-key"
+                  className="mb-1.5 flex items-center gap-1.5 font-condensed text-xs font-bold uppercase tracking-wider text-bt-muted"
+                >
+                  <KeyRound className="h-3.5 w-3.5 text-bt-red" />
+                  Edit Passcode (optional — auto-generated if blank)
+                </label>
+                <input
+                  id="family-edit-key"
+                  type="text"
+                  minLength={4}
+                  maxLength={32}
+                  value={editKey}
+                  onChange={(e) => setEditKey(e.target.value)}
+                  placeholder="Leave blank to auto-generate"
+                  className="w-full border border-bt-border bg-bt-bg px-3 py-2.5 font-mono text-sm text-white placeholder:text-bt-dim focus:border-bt-red focus:outline-none"
+                />
+              </div>
+
+              {error && (
+                <div className="border-y border-r border-bt-red/40 border-l-4 border-l-bt-red bg-bt-red/10 px-3.5 py-2.5 text-xs text-red-200">
+                  {error}
+                </div>
+              )}
+
+              <div className="flex items-center justify-end gap-3 border-t border-bt-border pt-4">
+                <button
+                  type="button"
+                  onClick={onClose}
+                  className="cursor-pointer border border-bt-border px-4 py-2 font-condensed text-xs font-bold uppercase tracking-widest text-bt-muted hover:border-white/40 hover:text-white transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={saving}
+                  className="p5-btn cursor-pointer inline-flex items-center gap-1.5 bg-bt-red px-5 py-2 font-condensed text-xs font-bold uppercase tracking-widest text-white hover:bg-bt-red-hover transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                  Save &amp; Create Link
+                </button>
+              </div>
+            </form>
+          )}
         </div>
-
-        {created ? (
-          <div className="p-5 space-y-4">
-            <p className="text-xs text-slate-300">
-              Anyone with the link below can view your board and run swap simulations. Keep your <strong className="text-white">Edit Passcode</strong> safe — it&apos;s required to edit members or record monthly snapshots.
-            </p>
-
-            <div>
-              <label className="block text-[11px] uppercase tracking-wider text-slate-400 mb-1">
-                Shareable Link
-              </label>
-              <div className="flex items-center gap-2">
-                <input
-                  readOnly
-                  value={shareUrl}
-                  className="flex-1 rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs font-mono text-sky-300"
-                />
-                <button
-                  onClick={() => copyText(shareUrl, "url")}
-                  className="rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-xs text-white hover:bg-slate-700"
-                >
-                  {copiedField === "url" ? (
-                    <Check className="h-4 w-4 text-lime-400" />
-                  ) : (
-                    <Copy className="h-4 w-4" />
-                  )}
-                </button>
-              </div>
-            </div>
-
-            <div>
-              <label className="block text-[11px] uppercase tracking-wider text-amber-300 mb-1">
-                Edit Passcode (Shown Once)
-              </label>
-              <div className="flex items-center gap-2">
-                <input
-                  readOnly
-                  value={created.editKey}
-                  className="flex-1 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs font-mono font-bold text-amber-200"
-                />
-                <button
-                  onClick={() => copyText(created.editKey, "key")}
-                  className="rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-xs text-white hover:bg-slate-700"
-                >
-                  {copiedField === "key" ? (
-                    <Check className="h-4 w-4 text-lime-400" />
-                  ) : (
-                    <Copy className="h-4 w-4" />
-                  )}
-                </button>
-              </div>
-            </div>
-
-            <div className="pt-2 flex items-center justify-end gap-2">
-              <button
-                onClick={onClose}
-                className="rounded-lg px-3.5 py-2 text-xs font-medium text-slate-300 hover:bg-slate-800"
-              >
-                Close
-              </button>
-              <a
-                href={`/f/${created.slug}`}
-                className="inline-flex items-center gap-1.5 rounded-lg bg-sky-500 px-4 py-2 text-xs font-semibold text-slate-950 hover:bg-sky-400"
-              >
-                Open Group Page
-                <ExternalLink className="h-3.5 w-3.5" />
-              </a>
-            </div>
-          </div>
-        ) : (
-          <form onSubmit={handleSubmit} className="p-5 space-y-4">
-            <p className="text-xs text-slate-400">
-              Creates a permanent shareable URL (<span className="font-mono text-slate-300">/f/your-group</span>) backed by Supabase with monthly snapshot tracking.
-            </p>
-
-            <div>
-              <label className="block text-xs font-medium text-slate-300 mb-1">
-                Family Group Name
-              </label>
-              <input
-                type="text"
-                required
-                maxLength={60}
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                placeholder="e.g. Squad Steam Family"
-                className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white focus:border-sky-500 focus:outline-none"
-              />
-            </div>
-
-            <div>
-              <label className="block text-xs font-medium text-slate-300 mb-1 flex items-center gap-1.5">
-                <KeyRound className="h-3.5 w-3.5 text-amber-400" />
-                Edit Passcode (optional — auto-generated if blank)
-              </label>
-              <input
-                type="text"
-                minLength={4}
-                maxLength={32}
-                value={editKey}
-                onChange={(e) => setEditKey(e.target.value)}
-                placeholder="Leave blank to auto-generate"
-                className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm font-mono text-white focus:border-sky-500 focus:outline-none"
-              />
-            </div>
-
-            {error && (
-              <div className="rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-200">
-                {error}
-              </div>
-            )}
-
-            <div className="pt-2 flex items-center justify-end gap-2">
-              <button
-                type="button"
-                onClick={onClose}
-                className="rounded-lg px-3.5 py-2 text-xs font-medium text-slate-300 hover:bg-slate-800"
-              >
-                Cancel
-              </button>
-              <button
-                type="submit"
-                disabled={saving}
-                className="inline-flex items-center gap-1.5 rounded-lg bg-sky-500 px-4 py-2 text-xs font-semibold text-slate-950 hover:bg-sky-400 disabled:opacity-50"
-              >
-                {saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-                Save &amp; Create Link
-              </button>
-            </div>
-          </form>
-        )}
       </div>
     </div>
   );
