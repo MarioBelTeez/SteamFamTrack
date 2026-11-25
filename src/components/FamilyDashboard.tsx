@@ -611,11 +611,52 @@ export function FamilyDashboard({
                   ? "Return to SteamFamTrack Launchpad"
                   : "SteamFamTrack Home"
               }
-              className="cursor-pointer shrink-0 p5-tag bg-bt-red hover:bg-bt-red-hover px-3 py-1.5 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-bt-red"
+              className="cursor-pointer shrink-0 flex items-center gap-2 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-bt-red"
             >
-              <span className="p5-unskew font-display text-xl leading-none tracking-widest text-white">
-                SF //
-              </span>
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                viewBox="0 0 64 64"
+                fill="none"
+                aria-hidden="true"
+                className="h-9 w-9 shrink-0"
+              >
+                <polygon
+                  points="2,2 50,2 62,14 62,62 2,62"
+                  fill="#08060A"
+                  stroke="#E8002D"
+                  strokeWidth="3"
+                />
+                <polygon points="48,2 62,16 62,2 48,2" fill="#E8002D" />
+                <circle
+                  cx="40"
+                  cy="22"
+                  r="7"
+                  stroke="#E8002D"
+                  strokeWidth="3.2"
+                />
+                <path
+                  d="M31 35.5C33.5 32.5 36.8 31 40 31C46.6 31 52 36.2 52 43V45H35"
+                  stroke="#E8002D"
+                  strokeWidth="3.2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+                <circle
+                  cx="24"
+                  cy="27"
+                  r="7.5"
+                  fill="#08060A"
+                  stroke="#FFFFFF"
+                  strokeWidth="3.4"
+                />
+                <path
+                  d="M11 49V46C11 38.8 16.8 34.5 24 34.5C31.2 34.5 37 38.8 37 46V49H11Z"
+                  fill="#08060A"
+                  stroke="#FFFFFF"
+                  strokeWidth="3.4"
+                  strokeLinejoin="round"
+                />
+              </svg>
             </Link>
 
             <div className="min-w-0">
