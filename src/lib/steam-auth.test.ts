@@ -6,6 +6,8 @@ const {
   STEAM_SESSION_COOKIE,
   signSteamSession,
   verifySteamSession,
+  signDiscordLinkToken,
+  verifyDiscordLinkToken,
   buildSteamOpenIdUrl,
   extractSteamIdFromClaimedId,
   verifySteamOpenIdCallback,
@@ -221,5 +223,45 @@ describe("getPublicOrigin", () => {
   it("falls back to request URL origin when proxy headers are absent", () => {
     const req = new Request("http://localhost:3000/api/auth/steam");
     assert.equal(getPublicOrigin(req), "http://localhost:3000");
+  });
+});
+
+describe("discord link token signing & verification", () => {
+  it("round-trips a valid Discord link token", () => {
+    const secret = "discord-link-secret";
+    const token = signDiscordLinkToken("123456789012345678", secret);
+    assert.deepEqual(verifyDiscordLinkToken(token, secret), {
+      discordUserId: "123456789012345678",
+    });
+  });
+
+  it("rejects tampered, wrong-secret, or expired Discord link tokens", () => {
+    const secret = "discord-link-secret";
+    const token = signDiscordLinkToken("123456789012345678", secret);
+    assert.equal(verifyDiscordLinkToken(token, "other-secret"), null);
+    assert.equal(verifyDiscordLinkToken(`${token}x`, secret), null);
+
+    const expiredPayload = Buffer.from(
+      JSON.stringify({ discordUserId: "123456789012345678", exp: Date.now() - 1000 }),
+      "utf8"
+    ).toString("base64url");
+    const sig = crypto
+      .createHmac("sha256", secret)
+      .update(expiredPayload)
+      .digest("base64url");
+    assert.equal(verifyDiscordLinkToken(`${expiredPayload}.${sig}`, secret), null);
+  });
+
+  it("supports custom returnToPath in buildSteamOpenIdUrl", () => {
+    const url = new URL(
+      buildSteamOpenIdUrl(
+        "https://steamfam.example",
+        "/api/auth/steam/callback?discord_link=abc"
+      )
+    );
+    assert.equal(
+      url.searchParams.get("openid.return_to"),
+      "https://steamfam.example/api/auth/steam/callback?discord_link=abc"
+    );
   });
 });

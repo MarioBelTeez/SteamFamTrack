@@ -1,5 +1,12 @@
+import crypto from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
-import { ChatInputCommandInteraction, EmbedBuilder } from "discord.js";
+import {
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
+  ChatInputCommandInteraction,
+  EmbedBuilder,
+} from "discord.js";
 import {
   AnalyzeResponse,
   MemberLibrary,
@@ -17,7 +24,31 @@ const ACCENT_AMBER = 0xfee75c;
 const ACCENT_RED = 0xed4245;
 
 const LINK_REQUIRED_MESSAGE =
-  "Link your Steam account first with `/link <steam_url>` (must match a Steam account saved in a SteamFamTrack family).";
+  "Verify and link your Steam account first with `/link` (must match a Steam account saved in a SteamFamTrack family).";
+
+const DISCORD_LINK_TTL_MS = 10 * 60 * 1000;
+
+function signDiscordLinkToken(discordUserId: string): string | null {
+  const secret =
+    process.env.DISCORD_LINK_SECRET?.trim() ||
+    process.env.SUPABASE_SERVICE_ROLE_KEY?.trim();
+  if (!secret) return null;
+
+  const payloadB64 = Buffer.from(
+    JSON.stringify({
+      discordUserId,
+      exp: Date.now() + DISCORD_LINK_TTL_MS,
+    }),
+    "utf8"
+  ).toString("base64url");
+
+  const sigB64 = crypto
+    .createHmac("sha256", secret)
+    .update(payloadB64)
+    .digest("base64url");
+
+  return `${payloadB64}.${sigB64}`;
+}
 
 function getApiBaseUrl(): string {
   const raw =
@@ -359,78 +390,44 @@ export async function handleInteraction(
 async function handleLink(
   interaction: ChatInputCommandInteraction
 ): Promise<void> {
-  const steamUrl = interaction.options.getString("steam_url", true).trim();
-
-  const db = getSupabaseClient();
-  if (!db) {
+  const token = signDiscordLinkToken(interaction.user.id);
+  if (!token) {
     await interaction.reply({
       content:
-        "Supabase is not configured on this bot (`SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY` missing).",
+        "Discord link signing is not configured on this bot (`SUPABASE_SERVICE_ROLE_KEY` or `DISCORD_LINK_SECRET` missing).",
       ephemeral: true,
     });
     return;
   }
 
-  await interaction.deferReply({ ephemeral: true });
-
-  const resolveRes = await fetch(`${getApiBaseUrl()}/api/steam/resolve`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ input: steamUrl }),
-  });
-  const resolved = (await resolveRes.json()) as {
-    steamId64?: string;
-    personaName?: string;
-    isLibraryPublic?: boolean;
-    gamesCount?: number;
-    error?: string;
-  };
-
-  if (!resolveRes.ok || !resolved.steamId64) {
-    await interaction.editReply({
-      content: `Could not resolve that Steam profile: ${resolved.error || "Unknown error"}`,
-    });
-    return;
-  }
-
-  const { error } = await db.from("discord_links").upsert(
-    {
-      discord_user_id: interaction.user.id,
-      steam_input: steamUrl,
-      steam_id64: resolved.steamId64,
-      updated_at: new Date().toISOString(),
-    },
-    { onConflict: "discord_user_id" }
-  );
-
-  if (error) {
-    await interaction.editReply({
-      content: `Failed to save your link: ${error.message}`,
-    });
-    return;
-  }
+  const verifyUrl = `${getApiBaseUrl()}/api/auth/steam?discord_link=${encodeURIComponent(
+    token
+  )}`;
 
   const embed = new EmbedBuilder()
-    .setColor(ACCENT_GREEN)
-    .setTitle("Steam Account Linked")
-    .addFields(
-      {
-        name: "Steam Persona",
-        value: `**${resolved.personaName || resolved.steamId64}** (\`${resolved.steamId64}\`)`,
-        inline: false,
-      },
-      {
-        name: "Library Visibility",
-        value: resolved.isLibraryPublic
-          ? `✅ Public (${resolved.gamesCount ?? 0} games)`
-          : "⚠️ Private Game Details (ask friends to set Game Details → Public)",
-        inline: false,
-      }
+    .setColor(EMBED_COLOR)
+    .setTitle("Verify Your Steam Account")
+    .setDescription(
+      "Click the button below to sign in through **Steam's official OpenID login**.\n\n" +
+        "• Proves you own your Steam account (prevents anyone else from linking it)\n" +
+        "• Never asks for or shares your Steam password\n" +
+        "• Link expires in **10 minutes**"
     )
-    .setFooter({ text: "Run /family board to view your Steam Family!" })
+    .setFooter({ text: "After signing in, run /family board in Discord!" })
     .setTimestamp();
 
-  await interaction.editReply({ embeds: [embed] });
+  const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder()
+      .setLabel("Sign in with Steam")
+      .setStyle(ButtonStyle.Link)
+      .setURL(verifyUrl)
+  );
+
+  await interaction.reply({
+    embeds: [embed],
+    components: [row],
+    ephemeral: true,
+  });
 }
 
 async function handleFamilyBoard(

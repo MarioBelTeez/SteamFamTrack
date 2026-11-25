@@ -3,6 +3,7 @@ import crypto from "node:crypto";
 export const STEAM_SESSION_COOKIE = "sft_steam_session";
 export const STEAM_SESSION_TTL_SECONDS = 60 * 60 * 24 * 14; // 14 days
 const STEAM_SESSION_TTL_MS = STEAM_SESSION_TTL_SECONDS * 1000;
+export const DISCORD_LINK_TTL_MS = 10 * 60 * 1000; // 10 minutes
 
 const STEAM_OPENID_ENDPOINT = "https://steamcommunity.com/openid/login";
 const OPENID_NS = "http://specs.openid.net/auth/2.0";
@@ -113,12 +114,98 @@ export function verifySteamSession(
   }
 }
 
-export function buildSteamOpenIdUrl(origin: string): string {
+export interface DiscordLinkPayload {
+  discordUserId: string;
+  exp: number;
+}
+
+function getDiscordLinkSecret(override?: string): string {
+  if (override) return override;
+  return (
+    process.env.DISCORD_LINK_SECRET ||
+    process.env.SUPABASE_SERVICE_ROLE_KEY ||
+    getSessionSecret()
+  );
+}
+
+export function signDiscordLinkToken(
+  discordUserId: string,
+  secret?: string
+): string {
+  const payload: DiscordLinkPayload = {
+    discordUserId,
+    exp: Date.now() + DISCORD_LINK_TTL_MS,
+  };
+  const payloadB64 = Buffer.from(JSON.stringify(payload), "utf8").toString(
+    "base64url"
+  );
+  const sigB64 = computeSignature(payloadB64, getDiscordLinkSecret(secret));
+  return `${payloadB64}.${sigB64}`;
+}
+
+export function verifyDiscordLinkToken(
+  token: string | undefined | null,
+  secret?: string
+): { discordUserId: string } | null {
+  if (!token || typeof token !== "string") return null;
+
+  const parts = token.split(".");
+  if (parts.length !== 2) return null;
+
+  const [payloadB64, sigB64] = parts;
+  if (!payloadB64 || !sigB64) return null;
+
+  const expectedSigB64 = computeSignature(
+    payloadB64,
+    getDiscordLinkSecret(secret)
+  );
+  const actualBuf = Buffer.from(sigB64, "utf8");
+  const expectedBuf = Buffer.from(expectedSigB64, "utf8");
+
+  if (
+    actualBuf.length !== expectedBuf.length ||
+    !crypto.timingSafeEqual(actualBuf, expectedBuf)
+  ) {
+    return null;
+  }
+
+  try {
+    const raw = Buffer.from(payloadB64, "base64url").toString("utf8");
+    const parsed = JSON.parse(raw) as Partial<DiscordLinkPayload>;
+
+    if (
+      typeof parsed.exp !== "number" ||
+      !Number.isFinite(parsed.exp) ||
+      parsed.exp <= Date.now()
+    ) {
+      return null;
+    }
+
+    if (
+      typeof parsed.discordUserId !== "string" ||
+      !/^\d{15,25}$/.test(parsed.discordUserId)
+    ) {
+      return null;
+    }
+
+    return { discordUserId: parsed.discordUserId };
+  } catch {
+    return null;
+  }
+}
+
+export function buildSteamOpenIdUrl(
+  origin: string,
+  returnToPath = "/api/auth/steam/callback"
+): string {
   const normalizedOrigin = origin.replace(/\/+$/, "");
+  const normalizedPath = returnToPath.startsWith("/")
+    ? returnToPath
+    : `/${returnToPath}`;
   const params = new URLSearchParams({
     "openid.ns": OPENID_NS,
     "openid.mode": "checkid_setup",
-    "openid.return_to": `${normalizedOrigin}/api/auth/steam/callback`,
+    "openid.return_to": `${normalizedOrigin}${normalizedPath}`,
     "openid.realm": normalizedOrigin,
     "openid.identity": OPENID_IDENTIFIER_SELECT,
     "openid.claimed_id": OPENID_IDENTIFIER_SELECT,

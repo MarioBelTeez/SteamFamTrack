@@ -19,16 +19,10 @@ export const commands = [
   new SlashCommandBuilder()
     .setName("link")
     .setDescription(
-      "Link your Discord account to your Steam profile (auto-detects your SteamFamTrack family)"
+      "Verify & link your Steam account via official Steam sign-in"
     )
     .setIntegrationTypes(integrationTypes)
-    .setContexts(contexts)
-    .addStringOption((opt) =>
-      opt
-        .setName("steam_url")
-        .setDescription("Your Steam profile URL, vanity name, or 17-digit SteamID64")
-        .setRequired(true)
-    ),
+    .setContexts(contexts),
 
   new SlashCommandBuilder()
     .setName("family")
