@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useRef, useState } from "react";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
@@ -23,13 +23,25 @@ import {
   Grid2x2,
   Loader2,
   Lock,
+  LogIn,
   Plus,
   Radio,
+  RefreshCw,
+  Search,
   Sparkles,
   Trash2,
+  UserPlus,
   Users,
+  X,
   XCircle,
 } from "lucide-react";
+
+export interface SteamSessionUser {
+  steamId64: string;
+  personaName: string;
+  avatarUrl: string;
+  profileUrl: string;
+}
 
 export interface RecentFamilyEntry {
   slug: string;
@@ -43,6 +55,7 @@ export interface FamilyLaunchpadProps {
   recentFamilies: RecentFamilyEntry[];
   loading: boolean;
   error: string | null;
+  steamUser?: SteamSessionUser | null;
   onLaunch: (payload: {
     region: SteamRegion;
     members: FamilyMemberInput[];
@@ -78,12 +91,35 @@ interface ResolveApiResponse {
   error?: string;
 }
 
+interface SteamFriendEntry {
+  steamId64: string;
+  personaName: string;
+  avatarUrl: string;
+  profileUrl: string;
+  friendSince?: number;
+}
+
+interface FriendsApiResponse {
+  steamId64?: string;
+  isPrivate?: boolean;
+  friends?: SteamFriendEntry[];
+  hint?: string;
+  error?: string;
+}
+
 function isPlaceholderName(name: string): boolean {
   const trimmed = name.trim();
   if (!trimmed) return true;
   return /^(New Member|Waitlist Friend|Member \d+|Waitlist \d+)$/i.test(
     trimmed
   );
+}
+
+function extractSteamId64(input: string): string | null {
+  const trimmed = input.trim().replace(/\/+$/, "");
+  if (/^\d{17}$/.test(trimmed)) return trimmed;
+  const match = trimmed.match(/steamcommunity\.com\/profiles\/(\d{17})/i);
+  return match?.[1] ?? null;
 }
 
 function deriveFallbackName(
@@ -158,6 +194,7 @@ export function FamilyLaunchpad({
   recentFamilies,
   loading,
   error,
+  steamUser = null,
   onLaunch,
 }: FamilyLaunchpadProps) {
   const router = useRouter();
@@ -167,8 +204,8 @@ export function FamilyLaunchpad({
   const [draftMembers, setDraftMembers] = useState<FamilyMemberInput[]>(() => [
     {
       id: "lp-m-1",
-      name: "",
-      steamUrlOrId: "",
+      name: steamUser ? steamUser.personaName : "",
+      steamUrlOrId: steamUser ? steamUser.steamId64 : "",
       joinDate: "",
       isWaitlist: false,
     },
@@ -191,60 +228,32 @@ export function FamilyLaunchpad({
   >({});
   const [localError, setLocalError] = useState<string | null>(null);
 
+  // Friends Picker state
+  const [friendsLookupInput, setFriendsLookupInput] = useState<string>("");
+  const [friends, setFriends] = useState<SteamFriendEntry[]>([]);
+  const [friendsLoaded, setFriendsLoaded] = useState<boolean>(false);
+  const [friendsIsPrivate, setFriendsIsPrivate] = useState<boolean>(false);
+  const [friendsHint, setFriendsHint] = useState<string | null>(null);
+  const [friendsError, setFriendsError] = useState<string | null>(null);
+  const [manualFriendsLoading, setManualFriendsLoading] =
+    useState<boolean>(false);
+  const [autoFetchedSteamId, setAutoFetchedSteamId] = useState<string | null>(
+    null
+  );
+  const [friendsCollapsed, setFriendsCollapsed] = useState<boolean>(false);
+  const [friendSearch, setFriendSearch] = useState<string>("");
+  const [pickerMode, setPickerMode] = useState<"active" | "waitlist">("active");
+  const [pickerNotice, setPickerNotice] = useState<string | null>(null);
+
   const idCounterRef = useRef<number>(2);
+  const lastVerifiedInputsRef = useRef<Record<string, string>>({});
+  const prefilledSteamIdRef = useRef<string | null>(
+    steamUser ? steamUser.steamId64 : null
+  );
+
   const nextRowId = (prefix: "m" | "w") => {
     idCounterRef.current += 1;
     return `lp-${prefix}-${Date.now()}-${idCounterRef.current}`;
-  };
-
-  const handleQuickJump = (e: FormEvent) => {
-    e.preventDefault();
-    const slug = extractFamilySlug(quickSlug);
-    if (!slug) return;
-    router.push(`/f/${encodeURIComponent(slug)}`);
-  };
-
-  const updateRow = (
-    isWait: boolean,
-    id: string,
-    patch: Partial<FamilyMemberInput>
-  ) => {
-    setLocalError(null);
-    if (isWait) {
-      setDraftWaitlist((prev) =>
-        prev.map((m) => (m.id === id ? { ...m, ...patch } : m))
-      );
-    } else {
-      setDraftMembers((prev) =>
-        prev.map((m) => (m.id === id ? { ...m, ...patch } : m))
-      );
-    }
-    if (patch.steamUrlOrId !== undefined) {
-      setVerifications((prev) => {
-        if (!prev[id]) return prev;
-        const next = { ...prev };
-        delete next[id];
-        return next;
-      });
-    }
-  };
-
-  const addMember = (isWait: boolean) => {
-    setLocalError(null);
-    const today = new Date().toISOString().slice(0, 10);
-    const newItem: FamilyMemberInput = {
-      id: nextRowId(isWait ? "w" : "m"),
-      name: "",
-      steamUrlOrId: "",
-      joinDate: isWait ? undefined : today,
-      isWaitlist: isWait,
-    };
-    if (isWait) {
-      setWaitlistOpen(true);
-      setDraftWaitlist((prev) => [...prev, newItem]);
-    } else if (draftMembers.length < 6) {
-      setDraftMembers((prev) => [...prev, newItem]);
-    }
   };
 
   const verifyRow = async (
@@ -255,6 +264,7 @@ export function FamilyLaunchpad({
     const input = steamUrlOrId.trim();
     if (!input || !hasApiKey) return;
 
+    lastVerifiedInputsRef.current[rowId] = input;
     setVerifications((prev) => ({
       ...prev,
       [rowId]: { status: "loading" },
@@ -268,6 +278,7 @@ export function FamilyLaunchpad({
       });
 
       const data = (await res.json().catch(() => ({}))) as ResolveApiResponse;
+      if (lastVerifiedInputsRef.current[rowId] !== input) return;
 
       if (!res.ok || data.error) {
         setVerifications((prev) => ({
@@ -334,6 +345,7 @@ export function FamilyLaunchpad({
         );
       }
     } catch (err) {
+      if (lastVerifiedInputsRef.current[rowId] !== input) return;
       setVerifications((prev) => ({
         ...prev,
         [rowId]: {
@@ -342,6 +354,222 @@ export function FamilyLaunchpad({
             err instanceof Error ? err.message : "Network error during lookup",
         },
       }));
+    }
+  };
+
+  const maybeAutoVerify = (
+    rowId: string,
+    rawValue: string,
+    isWait: boolean
+  ) => {
+    if (!hasApiKey) return;
+    const trimmed = rawValue.trim();
+    if (!trimmed) return;
+    if (lastVerifiedInputsRef.current[rowId] === trimmed) return;
+    void verifyRow(rowId, trimmed, isWait);
+  };
+
+  // Auto-prefill slot #1 (when empty) & auto-fetch GET /api/steam/friends when signed in
+  useEffect(() => {
+    if (!steamUser || !hasApiKey) return;
+    let cancelled = false;
+    const currentSteamId = steamUser.steamId64;
+    const currentPersona = steamUser.personaName;
+
+    const runSignedInBootstrap = async () => {
+      await Promise.resolve();
+      if (cancelled) return;
+
+      // Pre-fill slot #1 if all active slots are currently empty
+      if (prefilledSteamIdRef.current !== currentSteamId) {
+        prefilledSteamIdRef.current = currentSteamId;
+        setDraftMembers((prev) => {
+          const allEmpty = prev.every((m) => m.steamUrlOrId.trim() === "");
+          if (!allEmpty) return prev;
+          if (prev.length === 0) {
+            return [
+              {
+                id: "lp-m-1",
+                name: currentPersona,
+                steamUrlOrId: currentSteamId,
+                joinDate: "",
+                isWaitlist: false,
+              },
+            ];
+          }
+          return prev.map((m, i) =>
+            i === 0
+              ? {
+                  ...m,
+                  name: currentPersona,
+                  steamUrlOrId: currentSteamId,
+                }
+              : m
+          );
+        });
+      }
+
+      // Fetch signed-in user's friends list automatically
+      try {
+        const res = await fetch("/api/steam/friends", {
+          method: "GET",
+        });
+        const data = (await res.json().catch(() => ({}))) as FriendsApiResponse;
+        if (cancelled) return;
+
+        setAutoFetchedSteamId(currentSteamId);
+
+        if (!res.ok || data.error) {
+          setFriendsError(
+            data.error ?? `Could not load Steam friends (${res.status})`
+          );
+          setFriendsLoaded(false);
+          return;
+        }
+
+        setFriendsError(null);
+        setFriendsIsPrivate(Boolean(data.isPrivate));
+        setFriendsHint(data.hint ?? null);
+        setFriends(Array.isArray(data.friends) ? data.friends : []);
+        setFriendsLoaded(true);
+      } catch (err) {
+        if (cancelled) return;
+        setAutoFetchedSteamId(currentSteamId);
+        setFriendsError(
+          err instanceof Error
+            ? err.message
+            : "Network error while loading Steam friends"
+        );
+      }
+    };
+
+    void runSignedInBootstrap();
+    return () => {
+      cancelled = true;
+    };
+  }, [steamUser, hasApiKey]);
+
+  const handleRefreshSignedInFriends = async () => {
+    if (!steamUser || !hasApiKey) return;
+    setManualFriendsLoading(true);
+    setFriendsError(null);
+    setPickerNotice(null);
+    try {
+      const res = await fetch("/api/steam/friends", { method: "GET" });
+      const data = (await res.json().catch(() => ({}))) as FriendsApiResponse;
+      setAutoFetchedSteamId(steamUser.steamId64);
+      if (!res.ok || data.error) {
+        setFriendsError(
+          data.error ?? `Could not load Steam friends (${res.status})`
+        );
+        return;
+      }
+      setFriendsIsPrivate(Boolean(data.isPrivate));
+      setFriendsHint(data.hint ?? null);
+      setFriends(Array.isArray(data.friends) ? data.friends : []);
+      setFriendsLoaded(true);
+      setFriendsCollapsed(false);
+    } catch (err) {
+      setFriendsError(
+        err instanceof Error
+          ? err.message
+          : "Network error while loading Steam friends"
+      );
+    } finally {
+      setManualFriendsLoading(false);
+    }
+  };
+
+  const handleLoadFriendsByInput = async (e: FormEvent) => {
+    e.preventDefault();
+    const input = friendsLookupInput.trim();
+    if (!input || !hasApiKey) return;
+
+    setManualFriendsLoading(true);
+    setFriendsError(null);
+    setPickerNotice(null);
+    try {
+      const res = await fetch("/api/steam/friends", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ input }),
+      });
+      const data = (await res.json().catch(() => ({}))) as FriendsApiResponse;
+
+      if (!res.ok || data.error) {
+        setFriendsError(
+          data.error ?? `Could not load friends for "${input}" (${res.status})`
+        );
+        setFriendsLoaded(false);
+        return;
+      }
+
+      setFriendsIsPrivate(Boolean(data.isPrivate));
+      setFriendsHint(data.hint ?? null);
+      setFriends(Array.isArray(data.friends) ? data.friends : []);
+      setFriendsLoaded(true);
+      setFriendsCollapsed(false);
+    } catch (err) {
+      setFriendsError(
+        err instanceof Error
+          ? err.message
+          : "Network error while loading Steam friends"
+      );
+    } finally {
+      setManualFriendsLoading(false);
+    }
+  };
+
+  const handleQuickJump = (e: FormEvent) => {
+    e.preventDefault();
+    const slug = extractFamilySlug(quickSlug);
+    if (!slug) return;
+    router.push(`/f/${encodeURIComponent(slug)}`);
+  };
+
+  const updateRow = (
+    isWait: boolean,
+    id: string,
+    patch: Partial<FamilyMemberInput>
+  ) => {
+    setLocalError(null);
+    if (isWait) {
+      setDraftWaitlist((prev) =>
+        prev.map((m) => (m.id === id ? { ...m, ...patch } : m))
+      );
+    } else {
+      setDraftMembers((prev) =>
+        prev.map((m) => (m.id === id ? { ...m, ...patch } : m))
+      );
+    }
+    if (patch.steamUrlOrId !== undefined) {
+      if (!patch.steamUrlOrId.trim()) {
+        delete lastVerifiedInputsRef.current[id];
+      }
+      setVerifications((prev) => {
+        if (!prev[id]) return prev;
+        const next = { ...prev };
+        delete next[id];
+        return next;
+      });
+    }
+  };
+
+  const addMember = (isWait: boolean) => {
+    setLocalError(null);
+    const today = new Date().toISOString().slice(0, 10);
+    const newItem: FamilyMemberInput = {
+      id: nextRowId(isWait ? "w" : "m"),
+      name: "",
+      steamUrlOrId: "",
+      joinDate: isWait ? undefined : today,
+      isWaitlist: isWait,
+    };
+    if (isWait) {
+      setWaitlistOpen(true);
+      setDraftWaitlist((prev) => [...prev, newItem]);
+    } else if (draftMembers.length < 6) {
+      setDraftMembers((prev) => [...prev, newItem]);
     }
   };
 
@@ -359,6 +587,7 @@ export function FamilyLaunchpad({
       isWaitlist: false,
     }));
 
+    lastVerifiedInputsRef.current = {};
     setDraftMembers(importedRows);
     setVerifications({});
     setBulkOpen(false);
@@ -390,6 +619,168 @@ export function FamilyLaunchpad({
     }
   };
 
+  // Map steamId64 -> placement ("active" | "waitlist") and matching rowId
+  const friendPlacementMap = useMemo(() => {
+    const map = new Map<
+      string,
+      { placement: "active" | "waitlist"; rowId: string }
+    >();
+    for (const m of draftMembers) {
+      const sid =
+        verifications[m.id]?.steamId64 || extractSteamId64(m.steamUrlOrId);
+      if (sid) {
+        map.set(sid, { placement: "active", rowId: m.id });
+      }
+    }
+    for (const w of draftWaitlist) {
+      const sid =
+        verifications[w.id]?.steamId64 || extractSteamId64(w.steamUrlOrId);
+      if (sid && !map.has(sid)) {
+        map.set(sid, { placement: "waitlist", rowId: w.id });
+      }
+    }
+    return map;
+  }, [draftMembers, draftWaitlist, verifications]);
+
+  const filteredFriends = useMemo(() => {
+    const q = friendSearch.trim().toLowerCase();
+    if (!q) return friends;
+    return friends.filter(
+      (f) =>
+        f.personaName.toLowerCase().includes(q) || f.steamId64.includes(q)
+    );
+  }, [friends, friendSearch]);
+
+  const selectedFriendsCount = useMemo(
+    () => friends.filter((f) => friendPlacementMap.has(f.steamId64)).length,
+    [friends, friendPlacementMap]
+  );
+
+  const activeFilledCount = draftMembers.filter(
+    (m) => m.steamUrlOrId.trim().length > 0
+  ).length;
+
+  const toggleFriendSelection = (friend: SteamFriendEntry) => {
+    setLocalError(null);
+    setPickerNotice(null);
+
+    const existing = friendPlacementMap.get(friend.steamId64);
+    if (existing) {
+      delete lastVerifiedInputsRef.current[existing.rowId];
+      setVerifications((prev) => {
+        if (!prev[existing.rowId]) return prev;
+        const next = { ...prev };
+        delete next[existing.rowId];
+        return next;
+      });
+
+      if (existing.placement === "active") {
+        setDraftMembers((prev) => {
+          const remaining = prev.filter((m) => m.id !== existing.rowId);
+          if (remaining.length === 0) {
+            return [
+              {
+                id: nextRowId("m"),
+                name: "",
+                steamUrlOrId: "",
+                joinDate: "",
+                isWaitlist: false,
+              },
+            ];
+          }
+          return remaining;
+        });
+      } else {
+        setDraftWaitlist((prev) =>
+          prev.filter((w) => w.id !== existing.rowId)
+        );
+      }
+      return;
+    }
+
+    const today = new Date().toISOString().slice(0, 10);
+
+    if (pickerMode === "active") {
+      const emptySlot = draftMembers.find((m) => !m.steamUrlOrId.trim());
+      if (emptySlot) {
+        setDraftMembers((prev) =>
+          prev.map((m) =>
+            m.id === emptySlot.id
+              ? {
+                  ...m,
+                  name: friend.personaName,
+                  steamUrlOrId: friend.steamId64,
+                  joinDate: m.joinDate || today,
+                }
+              : m
+          )
+        );
+        if (hasApiKey) {
+          void verifyRow(emptySlot.id, friend.steamId64, false);
+        }
+        return;
+      }
+
+      if (draftMembers.length >= 6) {
+        setPickerNotice(
+          "All 6 active slots are filled — switch to Add to Waitlist or click a selected friend to remove."
+        );
+        return;
+      }
+
+      const newId = nextRowId("m");
+      setDraftMembers((prev) => [
+        ...prev,
+        {
+          id: newId,
+          name: friend.personaName,
+          steamUrlOrId: friend.steamId64,
+          joinDate: today,
+          isWaitlist: false,
+        },
+      ]);
+      if (hasApiKey) {
+        void verifyRow(newId, friend.steamId64, false);
+      }
+      return;
+    }
+
+    // Add to waitlist
+    setWaitlistOpen(true);
+    const emptyWaitSlot = draftWaitlist.find((w) => !w.steamUrlOrId.trim());
+    if (emptyWaitSlot) {
+      setDraftWaitlist((prev) =>
+        prev.map((w) =>
+          w.id === emptyWaitSlot.id
+            ? {
+                ...w,
+                name: friend.personaName,
+                steamUrlOrId: friend.steamId64,
+              }
+            : w
+        )
+      );
+      if (hasApiKey) {
+        void verifyRow(emptyWaitSlot.id, friend.steamId64, true);
+      }
+      return;
+    }
+
+    const newWaitId = nextRowId("w");
+    setDraftWaitlist((prev) => [
+      ...prev,
+      {
+        id: newWaitId,
+        name: friend.personaName,
+        steamUrlOrId: friend.steamId64,
+        isWaitlist: true,
+      },
+    ]);
+    if (hasApiKey) {
+      void verifyRow(newWaitId, friend.steamId64, true);
+    }
+  };
+
   const cleanActiveMembers = draftMembers
     .filter((m) => m.steamUrlOrId.trim().length > 0)
     .map((m, idx) => ({
@@ -416,9 +807,15 @@ export function FamilyLaunchpad({
     }));
 
   const parsedBulkLines = parseBulkLines(bulkText);
-  const verifiableActiveCount = draftMembers.filter(
-    (m) => m.steamUrlOrId.trim().length > 0
-  ).length;
+  const verifiableActiveCount = activeFilledCount;
+
+  const isAutoLoadingFriends = Boolean(
+    steamUser &&
+      hasApiKey &&
+      autoFetchedSteamId !== steamUser.steamId64 &&
+      !friendsError
+  );
+  const friendsLoading = manualFriendsLoading || isAutoLoadingFriends;
 
   const handleAnalyze = () => {
     if (!hasApiKey) {
@@ -577,20 +974,20 @@ export function FamilyLaunchpad({
           <div className="p5-frame bg-bt-border">
             <div className="bg-bt-surface p-4 space-y-4">
               <div className="flex items-center justify-between gap-2">
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 min-w-0">
                   <FolderOpen className="h-4 w-4 text-bt-red shrink-0" />
                   <span className="font-condensed text-xs font-bold uppercase tracking-[0.18em] text-white">
                     Open Saved Family
                   </span>
                 </div>
-                <span className="font-mono text-[10px] uppercase tracking-wider text-bt-dim">
+                <span className="whitespace-nowrap shrink-0 font-mono text-[10px] uppercase tracking-wider text-bt-dim">
                   /f/&lt;slug&gt;
                 </span>
               </div>
 
               <form onSubmit={handleQuickJump} className="flex items-stretch gap-2">
-                <div className="flex flex-1 items-center border border-bt-border bg-bt-bg focus-within:border-bt-red transition-colors">
-                  <span className="select-none pl-3 pr-1 font-mono text-xs text-bt-dim">
+                <div className="flex flex-1 min-w-0 items-center border border-bt-border bg-bt-bg focus-within:border-bt-red transition-colors">
+                  <span className="select-none whitespace-nowrap shrink-0 pl-3 pr-1 font-mono text-xs text-bt-dim">
                     /f/
                   </span>
                   <input
@@ -599,7 +996,7 @@ export function FamilyLaunchpad({
                     onChange={(e) => setQuickSlug(e.target.value)}
                     aria-label="Saved family slug or link"
                     placeholder="your-family-slug"
-                    className="w-full bg-transparent py-2 pr-2.5 font-mono text-xs text-white placeholder:text-bt-dim focus:outline-none"
+                    className="min-w-0 w-full bg-transparent py-2 pr-2.5 font-mono text-xs text-white placeholder:text-bt-dim focus:outline-none"
                   />
                 </div>
                 <button
@@ -665,8 +1062,9 @@ export function FamilyLaunchpad({
                       </span>
                     </div>
                     <p className="mt-1 text-xs text-bt-muted">
-                      Paste Steam profile URLs, vanity names, or SteamID64s.
-                      Steam Game Details must be Public.
+                      Sign in to pick Steam friends visually, or paste profile
+                      URLs, vanity names, or SteamID64s. Game Details must be
+                      Public.
                     </p>
                   </div>
                 </div>
@@ -784,6 +1182,300 @@ export function FamilyLaunchpad({
               </div>
             )}
 
+            {/* Quick-Start Steam Sign-In & Visual Friends Picker */}
+            {hasApiKey && (
+              <div className="border border-bt-border border-l-2 border-l-bt-red bg-bt-elevated/85 p-4 space-y-3">
+                {!steamUser ? (
+                  <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+                    <div className="flex flex-wrap items-center gap-3">
+                      <a
+                        href="/api/auth/steam"
+                        className="p5-btn cursor-pointer inline-flex items-center gap-2 bg-bt-red px-4 py-2 font-condensed text-xs font-bold uppercase tracking-[0.16em] text-white hover:bg-bt-red-hover transition-colors shrink-0"
+                      >
+                        <LogIn className="h-3.5 w-3.5" />
+                        <span>Sign in with Steam</span>
+                      </a>
+                      <span className="font-mono text-[11px] text-bt-muted">
+                        Auto-loads you + your Steam Friends Picker
+                      </span>
+                    </div>
+
+                    <form
+                      onSubmit={handleLoadFriendsByInput}
+                      className="flex flex-1 lg:max-w-[340px] items-stretch gap-2"
+                    >
+                      <input
+                        type="text"
+                        value={friendsLookupInput}
+                        onChange={(e) => {
+                          setFriendsLookupInput(e.target.value);
+                          if (friendsError) setFriendsError(null);
+                        }}
+                        aria-label="Enter your Steam URL or ID to load friends"
+                        placeholder="Or enter your Steam URL/ID"
+                        className="min-w-0 flex-1 border border-bt-border bg-bt-bg px-2.5 py-1.5 font-mono text-xs text-white placeholder:text-bt-dim focus:border-bt-red focus:outline-none"
+                      />
+                      <button
+                        type="submit"
+                        disabled={!friendsLookupInput.trim() || friendsLoading}
+                        className="cursor-pointer inline-flex items-center gap-1.5 border border-bt-red/55 bg-bt-bg px-3 py-1.5 font-condensed text-xs font-bold uppercase tracking-wider text-white hover:bg-bt-red hover:border-bt-red transition-colors disabled:opacity-40 disabled:cursor-not-allowed shrink-0"
+                      >
+                        {friendsLoading ? (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin text-bt-red" />
+                        ) : (
+                          <UserPlus className="h-3.5 w-3.5 text-bt-red" />
+                        )}
+                        <span>Load Friends</span>
+                      </button>
+                    </form>
+                  </div>
+                ) : (
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      {steamUser.avatarUrl ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img
+                          src={steamUser.avatarUrl}
+                          alt={steamUser.personaName}
+                          className="h-7 w-7 shrink-0 object-cover border border-bt-red/60"
+                        />
+                      ) : (
+                        <div className="h-7 w-7 shrink-0 border border-bt-border bg-bt-bg flex items-center justify-center font-mono text-[10px] text-bt-muted">
+                          {steamUser.personaName.slice(0, 2).toUpperCase()}
+                        </div>
+                      )}
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="truncate font-condensed text-xs font-bold uppercase tracking-[0.16em] text-white">
+                            Steam Friends Picker
+                          </span>
+                          <span className="border border-emerald-500/40 bg-emerald-950/60 px-1.5 py-0.5 font-mono text-[9px] font-semibold uppercase tracking-wider text-emerald-300">
+                            {steamUser.personaName}
+                          </span>
+                        </div>
+                        <p className="font-mono text-[10px] text-bt-muted">
+                          Click friends below to toggle them into Active Slots
+                          or Waitlist — zero URL hunting.
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <button
+                        type="button"
+                        onClick={handleRefreshSignedInFriends}
+                        disabled={friendsLoading}
+                        title="Refresh Steam friends list"
+                        aria-label="Refresh Steam friends list"
+                        className="cursor-pointer inline-flex items-center gap-1 border border-bt-border bg-bt-bg px-2.5 py-1 font-condensed text-[11px] font-bold uppercase tracking-wider text-bt-muted hover:border-bt-red hover:text-white transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                      >
+                        <RefreshCw
+                          className={`h-3 w-3 ${friendsLoading ? "animate-spin text-bt-red" : ""}`}
+                        />
+                        <span>Refresh</span>
+                      </button>
+                      {friendsLoaded && (
+                        <button
+                          type="button"
+                          onClick={() => setFriendsCollapsed((prev) => !prev)}
+                          className="cursor-pointer inline-flex items-center gap-1 border border-bt-border bg-bt-bg px-2.5 py-1 font-condensed text-[11px] font-bold uppercase tracking-wider text-bt-muted hover:border-bt-red hover:text-white transition-colors"
+                        >
+                          <span>{friendsCollapsed ? "Show" : "Hide"}</span>
+                          {friendsCollapsed ? (
+                            <ChevronDown className="h-3 w-3" />
+                          ) : (
+                            <ChevronUp className="h-3 w-3" />
+                          )}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* Friends Loading State */}
+                {friendsLoading && !friendsLoaded && (
+                  <div className="flex items-center gap-2 border-t border-bt-border/70 pt-3 font-mono text-xs text-bt-muted">
+                    <Loader2 className="h-3.5 w-3.5 animate-spin text-bt-red shrink-0" />
+                    <span>Loading Steam friends list...</span>
+                  </div>
+                )}
+
+                {/* Friends Error State */}
+                {friendsError && (
+                  <div
+                    role="alert"
+                    className="flex items-center gap-2 border border-bt-red/45 bg-bt-red/10 px-3 py-2 font-mono text-xs text-bt-red"
+                  >
+                    <XCircle className="h-3.5 w-3.5 shrink-0" />
+                    <span>{friendsError}</span>
+                  </div>
+                )}
+
+                {/* Private Friends List Hint */}
+                {friendsLoaded && friendsIsPrivate && !friendsCollapsed && (
+                  <div className="flex items-start gap-2.5 border border-amber-500/45 bg-amber-950/40 px-3 py-2.5">
+                    <Lock className="h-4 w-4 text-amber-400 shrink-0 mt-0.5" />
+                    <div className="space-y-0.5">
+                      <div className="font-condensed text-xs font-bold uppercase tracking-wider text-amber-200">
+                        Steam Friends List is Private
+                      </div>
+                      <p className="font-mono text-[11px] text-amber-200/85">
+                        {friendsHint ||
+                          "Set Steam Profile -> Edit Profile -> Privacy Settings -> Friends List to Public to pick friends visually, or paste profile URLs manually below."}
+                      </p>
+                    </div>
+                  </div>
+                )}
+
+                {/* Visual Friends Picker Grid */}
+                {friendsLoaded && !friendsIsPrivate && !friendsCollapsed && (
+                  <div className="border-t border-bt-border/70 pt-3 space-y-3">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      {/* Search Friends */}
+                      <div className="relative flex-1 min-w-[180px]">
+                        <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-bt-dim" />
+                        <input
+                          type="text"
+                          value={friendSearch}
+                          onChange={(e) => setFriendSearch(e.target.value)}
+                          aria-label="Search Steam friends"
+                          placeholder="Search friends..."
+                          className="w-full border border-bt-border bg-bt-bg py-1.5 pl-8 pr-7 font-mono text-xs text-white placeholder:text-bt-dim focus:border-bt-red focus:outline-none"
+                        />
+                        {friendSearch && (
+                          <button
+                            type="button"
+                            onClick={() => setFriendSearch("")}
+                            aria-label="Clear friend search"
+                            className="cursor-pointer absolute right-2 top-1/2 -translate-y-1/2 text-bt-muted hover:text-white"
+                          >
+                            <X className="h-3.5 w-3.5" />
+                          </button>
+                        )}
+                      </div>
+
+                      {/* Mode Toggle */}
+                      <div className="inline-flex border border-bt-border bg-bt-bg p-0.5 shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setPickerMode("active");
+                            setPickerNotice(null);
+                          }}
+                          aria-pressed={pickerMode === "active"}
+                          className={`cursor-pointer px-2.5 py-1 font-condensed text-[11px] font-bold uppercase tracking-wider transition-colors ${
+                            pickerMode === "active"
+                              ? "bg-bt-red text-white"
+                              : "text-bt-muted hover:text-white"
+                          }`}
+                        >
+                          Add to Active ({activeFilledCount}/6)
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setPickerMode("waitlist");
+                            setPickerNotice(null);
+                          }}
+                          aria-pressed={pickerMode === "waitlist"}
+                          className={`cursor-pointer px-2.5 py-1 font-condensed text-[11px] font-bold uppercase tracking-wider transition-colors ${
+                            pickerMode === "waitlist"
+                              ? "bg-bt-red text-white"
+                              : "text-bt-muted hover:text-white"
+                          }`}
+                        >
+                          Add to Waitlist
+                        </button>
+                      </div>
+
+                      {/* Selected Counter */}
+                      <span className="font-mono text-[11px] text-bt-muted whitespace-nowrap">
+                        <span className="font-semibold text-white">
+                          {selectedFriendsCount}
+                        </span>{" "}
+                        selected · {friends.length} friends
+                      </span>
+                    </div>
+
+                    {pickerNotice && (
+                      <div className="flex items-center gap-2 border border-amber-500/45 bg-amber-950/40 px-3 py-1.5 font-mono text-[11px] text-amber-200">
+                        <AlertTriangle className="h-3.5 w-3.5 text-amber-400 shrink-0" />
+                        <span>{pickerNotice}</span>
+                      </div>
+                    )}
+
+                    {filteredFriends.length === 0 ? (
+                      <div className="border border-dashed border-bt-border bg-bt-bg/60 py-5 text-center font-mono text-xs text-bt-muted">
+                        {friends.length === 0
+                          ? "No Steam friends found for this profile."
+                          : `No friends match "${friendSearch}".`}
+                      </div>
+                    ) : (
+                      <div className="max-h-[260px] overflow-y-auto tier-rail grid grid-cols-2 sm:grid-cols-3 gap-2 pr-1">
+                        {filteredFriends.map((friend) => {
+                          const match = friendPlacementMap.get(
+                            friend.steamId64
+                          );
+                          const placement = match?.placement ?? null;
+                          return (
+                            <button
+                              key={friend.steamId64}
+                              type="button"
+                              onClick={() => toggleFriendSelection(friend)}
+                              aria-pressed={placement !== null}
+                              className={`cursor-pointer group flex items-center gap-2 border p-2 text-left transition-colors ${
+                                placement
+                                  ? "border-bt-red bg-bt-red/15 text-white"
+                                  : "border-bt-border bg-bt-bg/85 text-white hover:border-bt-red/60 hover:bg-bt-bg"
+                              }`}
+                            >
+                              {friend.avatarUrl ? (
+                                // eslint-disable-next-line @next/next/no-img-element
+                                <img
+                                  src={friend.avatarUrl}
+                                  alt={friend.personaName}
+                                  className="h-8 w-8 shrink-0 object-cover border border-bt-border"
+                                />
+                              ) : (
+                                <div className="h-8 w-8 shrink-0 border border-bt-border bg-bt-elevated flex items-center justify-center font-mono text-[10px] text-bt-muted">
+                                  {friend.personaName
+                                    .slice(0, 2)
+                                    .toUpperCase()}
+                                </div>
+                              )}
+                              <div className="min-w-0 flex-1">
+                                <div className="truncate font-mono text-xs text-white leading-tight">
+                                  {friend.personaName}
+                                </div>
+                                {placement ? (
+                                  <span
+                                    className={`mt-1 inline-flex items-center gap-1 px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase tracking-wider ${
+                                      placement === "active"
+                                        ? "bg-bt-red text-white"
+                                        : "border border-bt-red/60 bg-bt-bg text-bt-red"
+                                    }`}
+                                  >
+                                    <Check className="h-2.5 w-2.5 shrink-0" />
+                                    {placement === "active"
+                                      ? "ACTIVE"
+                                      : "WAITLIST"}
+                                  </span>
+                                ) : (
+                                  <span className="mt-0.5 block font-mono text-[10px] text-bt-dim group-hover:text-bt-muted">
+                                    Click to add
+                                  </span>
+                                )}
+                              </div>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* Toggleable Bulk Paste Panel */}
             {bulkOpen && (
               <div className="border border-bt-red/45 bg-bt-elevated/90 p-4 space-y-3">
@@ -895,6 +1587,17 @@ export function FamilyLaunchpad({
                             steamUrlOrId: e.target.value,
                           })
                         }
+                        onBlur={(e) =>
+                          maybeAutoVerify(m.id, e.target.value, false)
+                        }
+                        onPaste={(e) => {
+                          const pasted = e.clipboardData.getData("text");
+                          if (!hasApiKey || !pasted.trim()) return;
+                          const inputEl = e.currentTarget;
+                          window.setTimeout(() => {
+                            maybeAutoVerify(m.id, inputEl.value, false);
+                          }, 0);
+                        }}
                         aria-label={`Slot ${idx + 1} Steam URL, vanity name, or SteamID64`}
                         placeholder="steamcommunity.com/id/... or 7656119..."
                         className={`${
@@ -937,6 +1640,7 @@ export function FamilyLaunchpad({
                         <button
                           type="button"
                           onClick={() => {
+                            delete lastVerifiedInputsRef.current[m.id];
                             setDraftMembers((prev) =>
                               prev.filter((x) => x.id !== m.id)
                             );
@@ -1049,6 +1753,18 @@ export function FamilyLaunchpad({
                                     steamUrlOrId: e.target.value,
                                   })
                                 }
+                                onBlur={(e) =>
+                                  maybeAutoVerify(w.id, e.target.value, true)
+                                }
+                                onPaste={(e) => {
+                                  const pasted =
+                                    e.clipboardData.getData("text");
+                                  if (!hasApiKey || !pasted.trim()) return;
+                                  const inputEl = e.currentTarget;
+                                  window.setTimeout(() => {
+                                    maybeAutoVerify(w.id, inputEl.value, true);
+                                  }, 0);
+                                }}
                                 aria-label={`Waitlist challenger ${idx + 1} Steam URL, vanity name, or SteamID64`}
                                 placeholder="steamcommunity.com/id/... or 7656119..."
                                 className={`${
@@ -1084,6 +1800,7 @@ export function FamilyLaunchpad({
                                 <button
                                   type="button"
                                   onClick={() => {
+                                    delete lastVerifiedInputsRef.current[w.id];
                                     setDraftWaitlist((prev) =>
                                       prev.filter((x) => x.id !== w.id)
                                     );

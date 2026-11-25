@@ -6,6 +6,7 @@ import { ContributionBoard } from "@/components/ContributionBoard";
 import {
   FamilyLaunchpad,
   type RecentFamilyEntry,
+  type SteamSessionUser,
 } from "@/components/FamilyLaunchpad";
 import { MemberEditorModal } from "@/components/MemberEditorModal";
 import { MonthlyHistory } from "@/components/MonthlyHistory";
@@ -33,6 +34,8 @@ import {
   Grid3X3,
   Link2,
   Loader2,
+  LogIn,
+  LogOut,
   RefreshCw,
   RotateCcw,
   Share2,
@@ -167,6 +170,8 @@ export function FamilyDashboard({
   const [saveModalOpen, setSaveModalOpen] = useState(false);
   const [copiedLink, setCopiedLink] = useState(false);
   const [recentFamilies, setRecentFamilies] = useState<RecentFamilyEntry[]>([]);
+  const [steamUser, setSteamUser] = useState<SteamSessionUser | null>(null);
+  const [signingOut, setSigningOut] = useState(false);
 
   const initialFamilySlug = initialFamily?.slug;
   const initialFamilyName = initialFamily?.name;
@@ -214,6 +219,36 @@ export function FamilyDashboard({
         setHasDatabase(Boolean(d.hasDatabase));
       })
       .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("authError") === "steam_failed") {
+      params.delete("authError");
+      const nextQuery = params.toString();
+      const nextUrl = `${window.location.pathname}${nextQuery ? `?${nextQuery}` : ""}${window.location.hash}`;
+      window.history.replaceState(null, "", nextUrl);
+      queueMicrotask(() => {
+        if (!cancelled) {
+          setError("Steam sign-in could not be verified. Please try again.");
+        }
+      });
+    }
+
+    fetch("/api/auth/me")
+      .then((r) => (r.ok ? r.json() : { user: null }))
+      .then((d: { user?: SteamSessionUser | null }) => {
+        if (!cancelled) {
+          setSteamUser(d?.user ?? null);
+        }
+      })
+      .catch(() => {});
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const runAnalysis = useCallback(
@@ -458,6 +493,22 @@ export function FamilyDashboard({
     setTimeout(() => setCopiedLink(false), 2000);
   };
 
+  const handleSteamSignOut = async () => {
+    if (signingOut) return;
+    setSigningOut(true);
+    try {
+      const res = await fetch("/api/auth/steam/logout", { method: "POST" });
+      if (!res.ok) {
+        throw new Error(`Sign-out failed (${res.status})`);
+      }
+      setSteamUser(null);
+    } catch {
+      setError("Failed to sign out of Steam session. Please try again.");
+    } finally {
+      setSigningOut(false);
+    }
+  };
+
   const activeNav =
     NAV_ITEMS.find((item) => item.id === activeTab) ?? NAV_ITEMS[0];
   const activeRegion = STEAM_REGIONS[region];
@@ -466,6 +517,51 @@ export function FamilyDashboard({
         (m) => m.memberId === analysis.fairness.upNextMemberId
       ) ?? analysis.fairness.members.find((m) => m.isUpNext)
     : undefined;
+
+  const steamAuthControl = steamUser ? (
+    <div className="border border-bt-border bg-bt-surface px-2.5 py-1 flex items-center gap-2">
+      {steamUser.avatarUrl ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={steamUser.avatarUrl}
+          alt={steamUser.personaName}
+          width={24}
+          height={24}
+          className="h-6 w-6 shrink-0 object-cover border border-bt-border"
+        />
+      ) : (
+        <span className="h-6 w-6 shrink-0 border border-bt-border bg-bt-bg flex items-center justify-center font-mono text-[10px] text-bt-muted">
+          {(steamUser.personaName || "ST").slice(0, 2).toUpperCase()}
+        </span>
+      )}
+      <span className="font-condensed font-bold uppercase tracking-wide text-xs text-white max-w-[140px] truncate">
+        {steamUser.personaName}
+      </span>
+      <button
+        type="button"
+        onClick={handleSteamSignOut}
+        disabled={signingOut}
+        title="Sign out of Steam"
+        aria-label="Sign out of Steam"
+        className="cursor-pointer inline-flex items-center gap-1 border-l border-bt-border pl-2 ml-0.5 font-mono text-[10px] uppercase tracking-wider text-bt-muted hover:text-bt-red transition-colors disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-bt-red"
+      >
+        {signingOut ? (
+          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+        ) : (
+          <LogOut className="h-3.5 w-3.5" />
+        )}
+        <span className="hidden sm:inline">Sign Out</span>
+      </button>
+    </div>
+  ) : hasApiKey ? (
+    <a
+      href="/api/auth/steam"
+      className="inline-flex items-center gap-1.5 border border-bt-border bg-bt-surface hover:border-bt-red text-white font-condensed font-bold uppercase tracking-wider text-xs px-3 py-1.5 cursor-pointer transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-bt-red"
+    >
+      <LogIn className="h-3.5 w-3.5 text-bt-red shrink-0" />
+      <span>Sign in with Steam</span>
+    </a>
+  ) : null;
 
   return (
     <div className="min-h-screen flex flex-col relative bg-bt-bg text-white overflow-x-clip">
@@ -539,91 +635,95 @@ export function FamilyDashboard({
             </div>
           </div>
 
-          {/* Right Command Bar */}
-          {hasActiveRoster ? (
-            <div className="flex flex-wrap items-center gap-2 bg-bt-surface border border-bt-border p-1.5">
-              {/* Region Picker */}
-              <select
-                aria-label="Pricing region"
-                value={region}
-                onChange={(e) => {
-                  setLoading(true);
-                  setRegion(e.target.value as SteamRegion);
-                }}
-                className="cursor-pointer bg-bt-bg border border-bt-border px-2.5 py-1.5 font-mono text-xs text-white hover:border-bt-muted transition-colors focus:border-bt-red focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-bt-red"
-              >
-                {Object.values(STEAM_REGIONS).map((r) => (
-                  <option
-                    key={r.code}
-                    value={r.code}
-                    className="bg-bt-bg text-white"
-                  >
-                    {r.label}
-                  </option>
-                ))}
-              </select>
+          {/* Right Command Bar & Steam Session Auth */}
+          <div className="flex flex-wrap items-center gap-2.5">
+            {hasActiveRoster ? (
+              <div className="flex flex-wrap items-center gap-2 bg-bt-surface border border-bt-border p-1.5">
+                {/* Region Picker */}
+                <select
+                  aria-label="Pricing region"
+                  value={region}
+                  onChange={(e) => {
+                    setLoading(true);
+                    setRegion(e.target.value as SteamRegion);
+                  }}
+                  className="cursor-pointer bg-bt-bg border border-bt-border px-2.5 py-1.5 font-mono text-xs text-white hover:border-bt-muted transition-colors focus:border-bt-red focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-bt-red"
+                >
+                  {Object.values(STEAM_REGIONS).map((r) => (
+                    <option
+                      key={r.code}
+                      value={r.code}
+                      className="bg-bt-bg text-white"
+                    >
+                      {r.label}
+                    </option>
+                  ))}
+                </select>
 
-              {/* Edit Roster */}
-              <button
-                type="button"
-                onClick={() => setEditorOpen(true)}
-                className="cursor-pointer inline-flex items-center gap-1.5 bg-bt-elevated border border-bt-border px-3 py-1.5 font-condensed text-xs font-bold uppercase tracking-wider text-white hover:border-bt-red transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-bt-red"
-              >
-                <Users className="h-3.5 w-3.5 text-bt-red" />
-                <span>Edit Roster</span>
-                <span className="font-mono text-[11px] text-bt-muted">
-                  ({members.length}/6)
-                </span>
-              </button>
-
-              {/* Share Link / Save & Share */}
-              {initialFamily ? (
+                {/* Edit Roster */}
                 <button
                   type="button"
-                  onClick={handleCopyShareLink}
-                  className="cursor-pointer inline-flex items-center gap-1.5 bg-bt-bg border border-bt-red/50 px-3 py-1.5 font-condensed text-xs font-bold uppercase tracking-wider text-white hover:bg-bt-red/15 hover:border-bt-red transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-bt-red"
+                  onClick={() => setEditorOpen(true)}
+                  className="cursor-pointer inline-flex items-center gap-1.5 bg-bt-elevated border border-bt-border px-3 py-1.5 font-condensed text-xs font-bold uppercase tracking-wider text-white hover:border-bt-red transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-bt-red"
                 >
-                  {copiedLink ? (
-                    <Check className="h-3.5 w-3.5 text-emerald-400" />
-                  ) : (
-                    <Link2 className="h-3.5 w-3.5 text-bt-red" />
-                  )}
-                  {copiedLink ? "Copied!" : "Share Link"}
+                  <Users className="h-3.5 w-3.5 text-bt-red" />
+                  <span>Edit Roster</span>
+                  <span className="font-mono text-[11px] text-bt-muted">
+                    ({members.length}/6)
+                  </span>
                 </button>
-              ) : (
-                hasDatabase && (
+
+                {/* Share Link / Save & Share */}
+                {initialFamily ? (
                   <button
                     type="button"
-                    onClick={() => setSaveModalOpen(true)}
+                    onClick={handleCopyShareLink}
                     className="cursor-pointer inline-flex items-center gap-1.5 bg-bt-bg border border-bt-red/50 px-3 py-1.5 font-condensed text-xs font-bold uppercase tracking-wider text-white hover:bg-bt-red/15 hover:border-bt-red transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-bt-red"
                   >
-                    <Share2 className="h-3.5 w-3.5 text-bt-red" />
-                    Save &amp; Share
+                    {copiedLink ? (
+                      <Check className="h-3.5 w-3.5 text-emerald-400" />
+                    ) : (
+                      <Link2 className="h-3.5 w-3.5 text-bt-red" />
+                    )}
+                    {copiedLink ? "Copied!" : "Share Link"}
                   </button>
-                )
-              )}
+                ) : (
+                  hasDatabase && (
+                    <button
+                      type="button"
+                      onClick={() => setSaveModalOpen(true)}
+                      className="cursor-pointer inline-flex items-center gap-1.5 bg-bt-bg border border-bt-red/50 px-3 py-1.5 font-condensed text-xs font-bold uppercase tracking-wider text-white hover:bg-bt-red/15 hover:border-bt-red transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-bt-red"
+                    >
+                      <Share2 className="h-3.5 w-3.5 text-bt-red" />
+                      Save &amp; Share
+                    </button>
+                  )
+                )}
 
-              {/* Primary Refresh CTA */}
-              <button
-                type="button"
-                onClick={() =>
-                  runAnalysis(region, includeExcluded, members, waitlist)
-                }
-                disabled={loading}
-                className="cursor-pointer p5-btn inline-flex items-center gap-1.5 bg-bt-red hover:bg-bt-red-hover px-4 py-1.5 font-condensed text-xs font-extrabold uppercase tracking-widest text-white disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-bt-red"
-              >
-                <RefreshCw
-                  className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`}
-                />
-                Refresh
-              </button>
-            </div>
-          ) : (
-            <div className="hidden sm:flex items-center gap-2.5 font-mono text-[11px] uppercase tracking-[0.18em] text-bt-dim">
-              <span className="h-1.5 w-1.5 bg-bt-red" />
-              <span>MAX 6 SLOTS // REAL-TIME STEAM PRICING</span>
-            </div>
-          )}
+                {/* Primary Refresh CTA */}
+                <button
+                  type="button"
+                  onClick={() =>
+                    runAnalysis(region, includeExcluded, members, waitlist)
+                  }
+                  disabled={loading}
+                  className="cursor-pointer p5-btn inline-flex items-center gap-1.5 bg-bt-red hover:bg-bt-red-hover px-4 py-1.5 font-condensed text-xs font-extrabold uppercase tracking-widest text-white disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-bt-red"
+                >
+                  <RefreshCw
+                    className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`}
+                  />
+                  Refresh
+                </button>
+              </div>
+            ) : (
+              <div className="hidden md:flex items-center gap-2.5 font-mono text-[11px] uppercase tracking-[0.18em] text-bt-dim">
+                <span className="h-1.5 w-1.5 bg-bt-red" />
+                <span>MAX 6 SLOTS // REAL-TIME STEAM PRICING</span>
+              </div>
+            )}
+
+            {steamAuthControl}
+          </div>
         </div>
       </header>
 
@@ -633,6 +733,7 @@ export function FamilyDashboard({
           <FamilyLaunchpad
             initialRegion={region}
             hasApiKey={hasApiKey}
+            steamUser={steamUser}
             recentFamilies={recentFamilies}
             loading={loading}
             error={error}
@@ -1082,6 +1183,7 @@ export function FamilyDashboard({
         members={members}
         waitlist={waitlist}
         hasApiKey={hasApiKey}
+        steamUser={steamUser}
         onSave={handleSaveMembers}
       />
 

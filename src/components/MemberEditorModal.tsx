@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { FamilyMemberInput } from "@/lib/types";
 import {
+  AlertTriangle,
   Check,
   CheckCircle2,
   ChevronDown,
@@ -13,19 +14,30 @@ import {
   Lock,
   Plus,
   Radio,
+  RefreshCw,
   RotateCcw,
+  Search,
   Trash2,
+  UserPlus,
   Users,
   X,
   XCircle,
 } from "lucide-react";
 
-interface MemberEditorModalProps {
+export interface SteamSessionUser {
+  steamId64: string;
+  personaName: string;
+  avatarUrl: string;
+  profileUrl: string;
+}
+
+export interface MemberEditorModalProps {
   isOpen: boolean;
   onClose: () => void;
   members: FamilyMemberInput[];
   waitlist: FamilyMemberInput[];
   hasApiKey?: boolean;
+  steamUser?: SteamSessionUser | null;
   onSave: (
     members: FamilyMemberInput[],
     waitlist: FamilyMemberInput[]
@@ -61,12 +73,35 @@ interface ResolveApiResponse {
   error?: string;
 }
 
+interface SteamFriendEntry {
+  steamId64: string;
+  personaName: string;
+  avatarUrl: string;
+  profileUrl: string;
+  friendSince?: number;
+}
+
+interface FriendsApiResponse {
+  steamId64?: string;
+  isPrivate?: boolean;
+  friends?: SteamFriendEntry[];
+  hint?: string;
+  error?: string;
+}
+
 function isPlaceholderName(name: string): boolean {
   const trimmed = name.trim();
   if (!trimmed) return true;
   return /^(New Member|Waitlist Friend|Member \d+|Waitlist \d+)$/i.test(
     trimmed
   );
+}
+
+function extractSteamId64(input: string): string | null {
+  const trimmed = input.trim().replace(/\/+$/, "");
+  if (/^\d{17}$/.test(trimmed)) return trimmed;
+  const match = trimmed.match(/steamcommunity\.com\/profiles\/(\d{17})/i);
+  return match?.[1] ?? null;
 }
 
 function deriveFallbackName(
@@ -107,6 +142,7 @@ export function MemberEditorModal({
   members,
   waitlist,
   hasApiKey = false,
+  steamUser = null,
   onSave,
 }: MemberEditorModalProps) {
   const [draftMembers, setDraftMembers] = useState<FamilyMemberInput[]>(() => {
@@ -136,7 +172,21 @@ export function MemberEditorModal({
   >({});
   const [validationError, setValidationError] = useState<string | null>(null);
 
+  // Pick From Friends Drawer state
+  const [friendsOpen, setFriendsOpen] = useState<boolean>(false);
+  const [friends, setFriends] = useState<SteamFriendEntry[]>([]);
+  const [friendsLoaded, setFriendsLoaded] = useState<boolean>(false);
+  const [friendsLoading, setFriendsLoading] = useState<boolean>(false);
+  const [friendsIsPrivate, setFriendsIsPrivate] = useState<boolean>(false);
+  const [friendsHint, setFriendsHint] = useState<string | null>(null);
+  const [friendsError, setFriendsError] = useState<string | null>(null);
+  const [friendSearch, setFriendSearch] = useState<string>("");
+  const [pickerMode, setPickerMode] = useState<"active" | "waitlist">("active");
+  const [pickerNotice, setPickerNotice] = useState<string | null>(null);
+
   const idCounterRef = useRef<number>(1);
+  const lastVerifiedInputsRef = useRef<Record<string, string>>({});
+
   const nextRowId = (prefix: "m" | "w") => {
     idCounterRef.current += 1;
     return `${prefix}-${Date.now()}-${idCounterRef.current}`;
@@ -152,6 +202,42 @@ export function MemberEditorModal({
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [isOpen, onClose]);
+
+  const friendPlacementMap = useMemo(() => {
+    const map = new Map<
+      string,
+      { placement: "active" | "waitlist"; rowId: string }
+    >();
+    for (const m of draftMembers) {
+      const sid =
+        verifications[m.id]?.steamId64 || extractSteamId64(m.steamUrlOrId);
+      if (sid) {
+        map.set(sid, { placement: "active", rowId: m.id });
+      }
+    }
+    for (const w of draftWaitlist) {
+      const sid =
+        verifications[w.id]?.steamId64 || extractSteamId64(w.steamUrlOrId);
+      if (sid && !map.has(sid)) {
+        map.set(sid, { placement: "waitlist", rowId: w.id });
+      }
+    }
+    return map;
+  }, [draftMembers, draftWaitlist, verifications]);
+
+  const filteredFriends = useMemo(() => {
+    const q = friendSearch.trim().toLowerCase();
+    if (!q) return friends;
+    return friends.filter(
+      (f) =>
+        f.personaName.toLowerCase().includes(q) || f.steamId64.includes(q)
+    );
+  }, [friends, friendSearch]);
+
+  const selectedFriendsCount = useMemo(
+    () => friends.filter((f) => friendPlacementMap.has(f.steamId64)).length,
+    [friends, friendPlacementMap]
+  );
 
   if (!isOpen) return null;
 
@@ -171,6 +257,9 @@ export function MemberEditorModal({
       );
     }
     if (patch.steamUrlOrId !== undefined) {
+      if (!patch.steamUrlOrId.trim()) {
+        delete lastVerifiedInputsRef.current[id];
+      }
       setVerifications((prev) => {
         if (!prev[id]) return prev;
         const next = { ...prev };
@@ -199,6 +288,7 @@ export function MemberEditorModal({
 
   const handleStartFresh = () => {
     const today = new Date().toISOString().slice(0, 10);
+    lastVerifiedInputsRef.current = {};
     setDraftMembers([
       {
         id: nextRowId("m"),
@@ -212,6 +302,7 @@ export function MemberEditorModal({
     setVerifications({});
     setBulkText("");
     setValidationError(null);
+    setPickerNotice(null);
     setShowFreshBanner(true);
   };
 
@@ -223,6 +314,7 @@ export function MemberEditorModal({
     const input = steamUrlOrId.trim();
     if (!input || !hasApiKey) return;
 
+    lastVerifiedInputsRef.current[rowId] = input;
     setVerifications((prev) => ({
       ...prev,
       [rowId]: { status: "loading" },
@@ -236,6 +328,7 @@ export function MemberEditorModal({
       });
 
       const data = (await res.json().catch(() => ({}))) as ResolveApiResponse;
+      if (lastVerifiedInputsRef.current[rowId] !== input) return;
 
       if (!res.ok || data.error) {
         setVerifications((prev) => ({
@@ -302,6 +395,7 @@ export function MemberEditorModal({
         );
       }
     } catch (err) {
+      if (lastVerifiedInputsRef.current[rowId] !== input) return;
       setVerifications((prev) => ({
         ...prev,
         [rowId]: {
@@ -310,6 +404,174 @@ export function MemberEditorModal({
             err instanceof Error ? err.message : "Network error during lookup",
         },
       }));
+    }
+  };
+
+  const maybeAutoVerify = (
+    rowId: string,
+    rawValue: string,
+    isWait: boolean
+  ) => {
+    if (!hasApiKey) return;
+    const trimmed = rawValue.trim();
+    if (!trimmed) return;
+    if (lastVerifiedInputsRef.current[rowId] === trimmed) return;
+    void verifyRow(rowId, trimmed, isWait);
+  };
+
+  const fetchSignedInFriends = async () => {
+    if (!steamUser || !hasApiKey) return;
+    setFriendsLoading(true);
+    setFriendsError(null);
+    setPickerNotice(null);
+    try {
+      const res = await fetch("/api/steam/friends", { method: "GET" });
+      const data = (await res.json().catch(() => ({}))) as FriendsApiResponse;
+      if (!res.ok || data.error) {
+        setFriendsError(
+          data.error ?? `Could not load Steam friends (${res.status})`
+        );
+        return;
+      }
+      setFriendsIsPrivate(Boolean(data.isPrivate));
+      setFriendsHint(data.hint ?? null);
+      setFriends(Array.isArray(data.friends) ? data.friends : []);
+      setFriendsLoaded(true);
+    } catch (err) {
+      setFriendsError(
+        err instanceof Error
+          ? err.message
+          : "Network error while loading Steam friends"
+      );
+    } finally {
+      setFriendsLoading(false);
+    }
+  };
+
+  const handleToggleFriendsDrawer = () => {
+    const nextOpen = !friendsOpen;
+    setFriendsOpen(nextOpen);
+    if (nextOpen && !friendsLoaded && !friendsLoading) {
+      void fetchSignedInFriends();
+    }
+  };
+
+  const toggleFriendSelection = (friend: SteamFriendEntry) => {
+    setValidationError(null);
+    setPickerNotice(null);
+
+    const existing = friendPlacementMap.get(friend.steamId64);
+    if (existing) {
+      delete lastVerifiedInputsRef.current[existing.rowId];
+      setVerifications((prev) => {
+        if (!prev[existing.rowId]) return prev;
+        const next = { ...prev };
+        delete next[existing.rowId];
+        return next;
+      });
+
+      if (existing.placement === "active") {
+        setDraftMembers((prev) => {
+          const remaining = prev.filter((m) => m.id !== existing.rowId);
+          if (remaining.length === 0) {
+            return [
+              {
+                id: nextRowId("m"),
+                name: "",
+                steamUrlOrId: "",
+                joinDate: "",
+                isWaitlist: false,
+              },
+            ];
+          }
+          return remaining;
+        });
+      } else {
+        setDraftWaitlist((prev) =>
+          prev.filter((w) => w.id !== existing.rowId)
+        );
+      }
+      return;
+    }
+
+    const today = new Date().toISOString().slice(0, 10);
+
+    if (pickerMode === "active") {
+      const emptySlot = draftMembers.find((m) => !m.steamUrlOrId.trim());
+      if (emptySlot) {
+        setDraftMembers((prev) =>
+          prev.map((m) =>
+            m.id === emptySlot.id
+              ? {
+                  ...m,
+                  name: friend.personaName,
+                  steamUrlOrId: friend.steamId64,
+                  joinDate: m.joinDate || today,
+                }
+              : m
+          )
+        );
+        if (hasApiKey) {
+          void verifyRow(emptySlot.id, friend.steamId64, false);
+        }
+        return;
+      }
+
+      if (draftMembers.length >= 6) {
+        setPickerNotice(
+          "All 6 active slots are filled — switch to Add to Waitlist or click a selected friend to remove."
+        );
+        return;
+      }
+
+      const newId = nextRowId("m");
+      setDraftMembers((prev) => [
+        ...prev,
+        {
+          id: newId,
+          name: friend.personaName,
+          steamUrlOrId: friend.steamId64,
+          joinDate: today,
+          isWaitlist: false,
+        },
+      ]);
+      if (hasApiKey) {
+        void verifyRow(newId, friend.steamId64, false);
+      }
+      return;
+    }
+
+    const emptyWaitSlot = draftWaitlist.find((w) => !w.steamUrlOrId.trim());
+    if (emptyWaitSlot) {
+      setDraftWaitlist((prev) =>
+        prev.map((w) =>
+          w.id === emptyWaitSlot.id
+            ? {
+                ...w,
+                name: friend.personaName,
+                steamUrlOrId: friend.steamId64,
+              }
+            : w
+        )
+      );
+      if (hasApiKey) {
+        void verifyRow(emptyWaitSlot.id, friend.steamId64, true);
+      }
+      return;
+    }
+
+    const newWaitId = nextRowId("w");
+    setDraftWaitlist((prev) => [
+      ...prev,
+      {
+        id: newWaitId,
+        name: friend.personaName,
+        steamUrlOrId: friend.steamId64,
+        isWaitlist: true,
+      },
+    ]);
+    if (hasApiKey) {
+      void verifyRow(newWaitId, friend.steamId64, true);
     }
   };
 
@@ -327,6 +589,7 @@ export function MemberEditorModal({
       isWaitlist: false,
     }));
 
+    lastVerifiedInputsRef.current = {};
     setDraftMembers(importedRows);
     setVerifications({});
     setBulkOpen(false);
@@ -383,9 +646,7 @@ export function MemberEditorModal({
     }));
 
   const parsedBulkLines = parseBulkLines(bulkText);
-  const verifiableActiveCount = draftMembers.filter(
-    (m) => m.steamUrlOrId.trim().length > 0
-  ).length;
+  const verifiableActiveCount = cleanActivePreview.length;
 
   const handleSubmit = () => {
     if (cleanActivePreview.length === 0) {
@@ -530,6 +791,31 @@ export function MemberEditorModal({
             {/* Header Quick Action Toolbar */}
             <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
               <div className="flex flex-wrap items-center gap-2">
+                {hasApiKey && steamUser && (
+                  <button
+                    type="button"
+                    onClick={handleToggleFriendsDrawer}
+                    className={`cursor-pointer inline-flex items-center gap-1.5 border px-3 py-1.5 font-condensed text-xs font-bold uppercase tracking-wider transition-colors ${
+                      friendsOpen
+                        ? "border-bt-red bg-bt-red/15 text-white"
+                        : "border-bt-border bg-bt-elevated text-white hover:border-bt-red"
+                    }`}
+                  >
+                    <UserPlus className="h-3.5 w-3.5 text-bt-red" />
+                    <span>
+                      Pick From Friends
+                      {friendsLoaded && !friendsIsPrivate
+                        ? ` (${friends.length})`
+                        : ""}
+                    </span>
+                    {friendsOpen ? (
+                      <ChevronUp className="h-3.5 w-3.5 text-bt-muted" />
+                    ) : (
+                      <ChevronDown className="h-3.5 w-3.5 text-bt-muted" />
+                    )}
+                  </button>
+                )}
+
                 <button
                   type="button"
                   onClick={() => setBulkOpen((prev) => !prev)}
@@ -597,6 +883,217 @@ export function MemberEditorModal({
               >
                 <XCircle className="h-4 w-4 text-bt-red shrink-0" />
                 <span>{validationError}</span>
+              </div>
+            )}
+
+            {/* Collapsible Pick From Friends Drawer */}
+            {hasApiKey && steamUser && friendsOpen && (
+              <div className="border border-bt-red/40 bg-bt-elevated/90 p-4 space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-2 min-w-0">
+                    {steamUser.avatarUrl ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        src={steamUser.avatarUrl}
+                        alt={steamUser.personaName}
+                        className="h-6 w-6 shrink-0 object-cover border border-bt-red/60"
+                      />
+                    ) : (
+                      <UserPlus className="h-4 w-4 text-bt-red shrink-0" />
+                    )}
+                    <span className="truncate font-condensed text-xs font-bold uppercase tracking-[0.18em] text-white">
+                      Steam Friends — {steamUser.personaName}
+                    </span>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={fetchSignedInFriends}
+                    disabled={friendsLoading}
+                    title="Refresh Steam friends list"
+                    className="cursor-pointer inline-flex items-center gap-1 border border-bt-border bg-bt-bg px-2.5 py-1 font-condensed text-[11px] font-bold uppercase tracking-wider text-bt-muted hover:border-bt-red hover:text-white transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    <RefreshCw
+                      className={`h-3 w-3 ${friendsLoading ? "animate-spin text-bt-red" : ""}`}
+                    />
+                    <span>Refresh</span>
+                  </button>
+                </div>
+
+                {friendsLoading && !friendsLoaded && (
+                  <div className="flex items-center gap-2 py-2 font-mono text-xs text-bt-muted">
+                    <Loader2 className="h-3.5 w-3.5 animate-spin text-bt-red shrink-0" />
+                    <span>Loading Steam friends list...</span>
+                  </div>
+                )}
+
+                {friendsError && (
+                  <div
+                    role="alert"
+                    className="flex items-center gap-2 border border-bt-red/45 bg-bt-red/10 px-3 py-2 font-mono text-xs text-bt-red"
+                  >
+                    <XCircle className="h-3.5 w-3.5 shrink-0" />
+                    <span>{friendsError}</span>
+                  </div>
+                )}
+
+                {friendsLoaded && friendsIsPrivate && (
+                  <div className="flex items-start gap-2.5 border border-amber-500/45 bg-amber-950/40 px-3 py-2.5">
+                    <Lock className="h-4 w-4 text-amber-400 shrink-0 mt-0.5" />
+                    <div className="space-y-0.5">
+                      <div className="font-condensed text-xs font-bold uppercase tracking-wider text-amber-200">
+                        Steam Friends List is Private
+                      </div>
+                      <p className="font-mono text-[11px] text-amber-200/85">
+                        {friendsHint ||
+                          "Set Steam Profile -> Edit Profile -> Privacy Settings -> Friends List to Public to pick friends visually."}
+                      </p>
+                    </div>
+                  </div>
+                )}
+
+                {friendsLoaded && !friendsIsPrivate && (
+                  <div className="space-y-3">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="relative flex-1 min-w-[170px]">
+                        <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-bt-dim" />
+                        <input
+                          type="text"
+                          value={friendSearch}
+                          onChange={(e) => setFriendSearch(e.target.value)}
+                          aria-label="Search Steam friends"
+                          placeholder="Search friends..."
+                          className="w-full border border-bt-border bg-bt-bg py-1.5 pl-8 pr-7 font-mono text-xs text-white placeholder:text-bt-dim focus:border-bt-red focus:outline-none"
+                        />
+                        {friendSearch && (
+                          <button
+                            type="button"
+                            onClick={() => setFriendSearch("")}
+                            aria-label="Clear friend search"
+                            className="cursor-pointer absolute right-2 top-1/2 -translate-y-1/2 text-bt-muted hover:text-white"
+                          >
+                            <X className="h-3.5 w-3.5" />
+                          </button>
+                        )}
+                      </div>
+
+                      <div className="inline-flex border border-bt-border bg-bt-bg p-0.5 shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setPickerMode("active");
+                            setPickerNotice(null);
+                          }}
+                          aria-pressed={pickerMode === "active"}
+                          className={`cursor-pointer px-2.5 py-1 font-condensed text-[11px] font-bold uppercase tracking-wider transition-colors ${
+                            pickerMode === "active"
+                              ? "bg-bt-red text-white"
+                              : "text-bt-muted hover:text-white"
+                          }`}
+                        >
+                          Add to Active ({verifiableActiveCount}/6)
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setPickerMode("waitlist");
+                            setPickerNotice(null);
+                          }}
+                          aria-pressed={pickerMode === "waitlist"}
+                          className={`cursor-pointer px-2.5 py-1 font-condensed text-[11px] font-bold uppercase tracking-wider transition-colors ${
+                            pickerMode === "waitlist"
+                              ? "bg-bt-red text-white"
+                              : "text-bt-muted hover:text-white"
+                          }`}
+                        >
+                          Add to Waitlist
+                        </button>
+                      </div>
+
+                      <span className="font-mono text-[11px] text-bt-muted whitespace-nowrap">
+                        <span className="font-semibold text-white">
+                          {selectedFriendsCount}
+                        </span>{" "}
+                        selected
+                      </span>
+                    </div>
+
+                    {pickerNotice && (
+                      <div className="flex items-center gap-2 border border-amber-500/45 bg-amber-950/40 px-3 py-1.5 font-mono text-[11px] text-amber-200">
+                        <AlertTriangle className="h-3.5 w-3.5 text-amber-400 shrink-0" />
+                        <span>{pickerNotice}</span>
+                      </div>
+                    )}
+
+                    {filteredFriends.length === 0 ? (
+                      <div className="border border-dashed border-bt-border bg-bt-bg/60 py-4 text-center font-mono text-xs text-bt-muted">
+                        {friends.length === 0
+                          ? "No Steam friends found on your profile."
+                          : `No friends match "${friendSearch}".`}
+                      </div>
+                    ) : (
+                      <div className="max-h-[260px] overflow-y-auto tier-rail grid grid-cols-2 sm:grid-cols-3 gap-2 pr-1">
+                        {filteredFriends.map((friend) => {
+                          const match = friendPlacementMap.get(
+                            friend.steamId64
+                          );
+                          const placement = match?.placement ?? null;
+                          return (
+                            <button
+                              key={friend.steamId64}
+                              type="button"
+                              onClick={() => toggleFriendSelection(friend)}
+                              aria-pressed={placement !== null}
+                              className={`cursor-pointer group flex items-center gap-2 border p-2 text-left transition-colors ${
+                                placement
+                                  ? "border-bt-red bg-bt-red/15 text-white"
+                                  : "border-bt-border bg-bt-bg/85 text-white hover:border-bt-red/60 hover:bg-bt-bg"
+                              }`}
+                            >
+                              {friend.avatarUrl ? (
+                                // eslint-disable-next-line @next/next/no-img-element
+                                <img
+                                  src={friend.avatarUrl}
+                                  alt={friend.personaName}
+                                  className="h-8 w-8 shrink-0 object-cover border border-bt-border"
+                                />
+                              ) : (
+                                <div className="h-8 w-8 shrink-0 border border-bt-border bg-bt-elevated flex items-center justify-center font-mono text-[10px] text-bt-muted">
+                                  {friend.personaName
+                                    .slice(0, 2)
+                                    .toUpperCase()}
+                                </div>
+                              )}
+                              <div className="min-w-0 flex-1">
+                                <div className="truncate font-mono text-xs text-white leading-tight">
+                                  {friend.personaName}
+                                </div>
+                                {placement ? (
+                                  <span
+                                    className={`mt-1 inline-flex items-center gap-1 px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase tracking-wider ${
+                                      placement === "active"
+                                        ? "bg-bt-red text-white"
+                                        : "border border-bt-red/60 bg-bt-bg text-bt-red"
+                                    }`}
+                                  >
+                                    <Check className="h-2.5 w-2.5 shrink-0" />
+                                    {placement === "active"
+                                      ? "ACTIVE"
+                                      : "WAITLIST"}
+                                  </span>
+                                ) : (
+                                  <span className="mt-0.5 block font-mono text-[10px] text-bt-dim group-hover:text-bt-muted">
+                                    Click to add
+                                  </span>
+                                )}
+                              </div>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             )}
 
@@ -730,6 +1227,17 @@ export function MemberEditorModal({
                               steamUrlOrId: e.target.value,
                             })
                           }
+                          onBlur={(e) =>
+                            maybeAutoVerify(m.id, e.target.value, false)
+                          }
+                          onPaste={(e) => {
+                            const pasted = e.clipboardData.getData("text");
+                            if (!hasApiKey || !pasted.trim()) return;
+                            const inputEl = e.currentTarget;
+                            window.setTimeout(() => {
+                              maybeAutoVerify(m.id, inputEl.value, false);
+                            }, 0);
+                          }}
                           aria-label={`Member ${idx + 1} Steam URL, vanity name, or SteamID64`}
                           placeholder="steamcommunity.com/id/... or 7656119..."
                           className={`${
@@ -772,6 +1280,7 @@ export function MemberEditorModal({
                           <button
                             type="button"
                             onClick={() => {
+                              delete lastVerifiedInputsRef.current[m.id];
                               setDraftMembers((prev) =>
                                 prev.filter((x) => x.id !== m.id)
                               );
@@ -869,6 +1378,17 @@ export function MemberEditorModal({
                                   steamUrlOrId: e.target.value,
                                 })
                               }
+                              onBlur={(e) =>
+                                maybeAutoVerify(w.id, e.target.value, true)
+                              }
+                              onPaste={(e) => {
+                                const pasted = e.clipboardData.getData("text");
+                                if (!hasApiKey || !pasted.trim()) return;
+                                const inputEl = e.currentTarget;
+                                window.setTimeout(() => {
+                                  maybeAutoVerify(w.id, inputEl.value, true);
+                                }, 0);
+                              }}
                               aria-label={`Waitlist member ${idx + 1} Steam URL, vanity name, or SteamID64`}
                               placeholder="steamcommunity.com/id/... or 7656119..."
                               className={`${
@@ -904,6 +1424,7 @@ export function MemberEditorModal({
                               <button
                                 type="button"
                                 onClick={() => {
+                                  delete lastVerifiedInputsRef.current[w.id];
                                   setDraftWaitlist((prev) =>
                                     prev.filter((x) => x.id !== w.id)
                                   );
