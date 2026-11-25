@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { FamilyAnalysis } from "@/lib/types";
 import {
   ArrowUpDown,
@@ -23,7 +23,7 @@ type OwnershipFilter = "all" | "exclusive" | "shared" | "excluded";
 type SortOption = "price-desc" | "title-asc" | "shared-desc";
 type ViewMode = "grid" | "list";
 
-const PAGE_SIZE = 60;
+const PAGE_SIZE = 24;
 const HEATMAP_LEGEND_STEPS = [0, 0.14, 0.28, 0.46, 0.65] as const;
 
 interface SteamHeaderArtProps {
@@ -187,6 +187,27 @@ export function OverlapAndCatalog({ analysis }: OverlapAndCatalogProps) {
     () => filteredCatalog.slice(0, visibleCount),
     [filteredCatalog, visibleCount]
   );
+
+  const loadMoreRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    const el = loadMoreRef.current;
+    if (!el || filteredCatalog.length <= visibleCount) return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) {
+          setVisibleCount((prev) =>
+            Math.min(prev + PAGE_SIZE, filteredCatalog.length)
+          );
+        }
+      },
+      { rootMargin: "320px 0px" }
+    );
+
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [filteredCatalog.length, visibleCount]);
 
   const hasActiveFilters =
     query.trim().length > 0 ||
@@ -872,7 +893,10 @@ export function OverlapAndCatalog({ analysis }: OverlapAndCatalogProps) {
 
           {/* Pagination Footer for Large Libraries */}
           {filteredCatalog.length > visibleCount && (
-            <div className="border-t border-bt-border bg-bt-elevated/40 px-5 py-3 flex flex-wrap items-center justify-between gap-3">
+            <div
+              ref={loadMoreRef}
+              className="border-t border-bt-border bg-bt-elevated/40 px-5 py-3 flex flex-wrap items-center justify-between gap-3"
+            >
               <span className="font-mono text-xs text-bt-muted tabular-nums">
                 Showing {visibleCatalog.length} of {filteredCatalog.length} titles
               </span>

@@ -1,40 +1,75 @@
 "use client";
 
-import { FormEvent, useMemo, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { SteamGameCheckResult } from "@/lib/steam-check";
-import { MemberLibrary, STEAM_REGIONS, SteamRegion } from "@/lib/types";
+import {
+  FairnessSummary,
+  MemberLibrary,
+  STEAM_REGIONS,
+  SteamRegion,
+} from "@/lib/types";
 import {
   CheckCircle2,
+  Dices,
   ExternalLink,
   Loader2,
+  RotateCcw,
+  Scale,
   Search,
   ShieldAlert,
   Sparkles,
   Tag,
+  Trophy,
   Users,
   XCircle,
 } from "lucide-react";
+
+type RouletteMode = "fairness" | "equal";
 
 interface GameCheckerCardProps {
   activeLibraries: MemberLibrary[];
   waitlistLibraries: MemberLibrary[];
   region: SteamRegion;
+  fairness?: FairnessSummary;
 }
 
 export function GameCheckerCard({
   activeLibraries,
   waitlistLibraries,
   region,
+  fairness,
 }: GameCheckerCardProps) {
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<SteamGameCheckResult | null>(null);
+  const [rouletteMode, setRouletteMode] = useState<RouletteMode>("fairness");
+  const [spinning, setSpinning] = useState(false);
+  const [highlightedIndex, setHighlightedIndex] = useState<number | null>(null);
+  const [winnerId, setWinnerId] = useState<string | null>(null);
+  const spinTimersRef = useRef<number[]>([]);
+
+  const clearSpinTimers = useCallback(() => {
+    for (const timer of spinTimersRef.current) {
+      window.clearTimeout(timer);
+    }
+    spinTimersRef.current = [];
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      clearSpinTimers();
+    };
+  }, [clearSpinTimers]);
 
   async function runCheck(searchQuery: string) {
     const trimmed = searchQuery.trim();
     if (!trimmed) return;
 
+    clearSpinTimers();
+    setSpinning(false);
+    setHighlightedIndex(null);
+    setWinnerId(null);
     setLoading(true);
     setError(null);
     try {
@@ -72,6 +107,107 @@ export function GameCheckerCard({
     );
     return { activeOwners, waitlistOwners };
   }, [result, activeLibraries, waitlistLibraries]);
+
+  const rouletteEntries = useMemo(() => {
+    if (activeLibraries.length === 0) return [];
+    const weighted = activeLibraries.map((lib) => {
+      const fairnessMember = fairness?.members.find(
+        (m) => m.memberId === lib.member.id
+      );
+      const delta = fairnessMember?.deltaFromAverageValue ?? 0;
+      const weight =
+        rouletteMode === "equal"
+          ? 1
+          : Math.max(10, delta < 0 ? Math.abs(delta) + 50 : 25);
+      const displayName = lib.personaName || lib.member.name;
+      return {
+        memberId: lib.member.id,
+        displayName,
+        avatarUrl: lib.avatarUrl,
+        weight,
+        isUpNext: fairnessMember?.isUpNext ?? false,
+      };
+    });
+
+    const totalWeight = weighted.reduce((sum, entry) => sum + entry.weight, 0);
+    return weighted.map((entry) => {
+      const odds = totalWeight > 0 ? (entry.weight / totalWeight) * 100 : 0;
+      const oddsLabel = `${odds.toFixed(1).replace(/\.0$/, "")}%`;
+      return {
+        ...entry,
+        odds,
+        oddsLabel,
+      };
+    });
+  }, [activeLibraries, fairness, rouletteMode]);
+
+  const selectedWinner = useMemo(
+    () => rouletteEntries.find((entry) => entry.memberId === winnerId) ?? null,
+    [rouletteEntries, winnerId]
+  );
+
+  function handleModeChange(nextMode: RouletteMode) {
+    if (nextMode === rouletteMode) return;
+    clearSpinTimers();
+    setSpinning(false);
+    setHighlightedIndex(null);
+    setWinnerId(null);
+    setRouletteMode(nextMode);
+  }
+
+  function spinRoulette() {
+    if (rouletteEntries.length === 0 || spinning) return;
+
+    clearSpinTimers();
+    setWinnerId(null);
+    setSpinning(true);
+
+    const totalWeight = rouletteEntries.reduce(
+      (sum, entry) => sum + entry.weight,
+      0
+    );
+    let roll = Math.random() * totalWeight;
+    let winnerIdx = rouletteEntries.length - 1;
+    for (let i = 0; i < rouletteEntries.length; i++) {
+      roll -= rouletteEntries[i].weight;
+      if (roll <= 0) {
+        winnerIdx = i;
+        break;
+      }
+    }
+
+    const n = rouletteEntries.length;
+    const startIdx =
+      highlightedIndex !== null ? (highlightedIndex + 1) % n : 0;
+    const baseSteps = n === 1 ? 6 : Math.max(14, n * 3);
+    const offset = (winnerIdx - startIdx + n) % n;
+    const remainder = (baseSteps - 1) % n;
+    const steps = baseSteps + ((offset - remainder + n) % n);
+
+    const rawDelays = Array.from({ length: steps }, (_, i) => {
+      const t = steps > 1 ? i / (steps - 1) : 1;
+      return 38 + 185 * t * t;
+    });
+    const rawTotal = rawDelays.reduce((sum, d) => sum + d, 0);
+    const targetDurationMs = n === 1 ? 650 : 1400;
+    const scale = rawTotal > 0 ? targetDurationMs / rawTotal : 1;
+
+    setHighlightedIndex(startIdx);
+    let elapsed = 0;
+    for (let i = 1; i < steps; i++) {
+      const idx = (startIdx + i) % n;
+      const isLast = i === steps - 1;
+      elapsed += rawDelays[i] * scale;
+      const timer = window.setTimeout(() => {
+        setHighlightedIndex(idx);
+        if (isLast) {
+          setSpinning(false);
+          setWinnerId(rouletteEntries[winnerIdx].memberId);
+        }
+      }, elapsed);
+      spinTimersRef.current.push(timer);
+    }
+  }
 
   const regionInfo = STEAM_REGIONS[region];
 
@@ -258,6 +394,174 @@ export function GameCheckerCard({
                   </div>
                 )}
               </div>
+
+              {activeLibraries.length > 0 && (
+                <div className="border-t border-bt-border pt-4 space-y-3.5">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="font-mono text-[10px] uppercase tracking-[0.18em] text-bt-dim flex items-center gap-1.5">
+                      <Dices className="w-3.5 h-3.5 text-bt-red" /> WHO BUYS
+                      THIS? // BUYER ROULETTE
+                    </div>
+
+                    <div
+                      role="group"
+                      aria-label="Buyer roulette odds mode"
+                      className="inline-flex items-center bg-bt-bg border border-bt-border p-0.5"
+                    >
+                      <button
+                        type="button"
+                        onClick={() => handleModeChange("fairness")}
+                        className={`px-2.5 py-1 font-mono text-[10px] uppercase tracking-wider inline-flex items-center gap-1 transition-colors cursor-pointer ${
+                          rouletteMode === "fairness"
+                            ? "bg-bt-red text-white font-bold"
+                            : "text-bt-muted hover:text-white"
+                        }`}
+                      >
+                        <Scale className="w-3 h-3" /> Fairness-Weighted
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleModeChange("equal")}
+                        className={`px-2.5 py-1 font-mono text-[10px] uppercase tracking-wider transition-colors cursor-pointer ${
+                          rouletteMode === "equal"
+                            ? "bg-bt-red text-white font-bold"
+                            : "text-bt-muted hover:text-white"
+                        }`}
+                      >
+                        Equal Odds
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                    {rouletteEntries.map((entry, idx) => {
+                      const isHighlighted =
+                        spinning && highlightedIndex === idx;
+                      const isWinner =
+                        !spinning && selectedWinner?.memberId === entry.memberId;
+                      return (
+                        <div
+                          key={entry.memberId}
+                          className={`flex items-center justify-between gap-2 px-2.5 py-2 border transition-all duration-100 ${
+                            isWinner
+                              ? "border-bt-red bg-bt-red/20 shadow-[0_0_0_1px_#E8002D]"
+                              : isHighlighted
+                                ? "border-bt-red bg-bt-red/25 text-white scale-[1.02] shadow-[0_0_14px_rgba(232,0,45,0.45)]"
+                                : "border-bt-border bg-bt-surface/80"
+                          }`}
+                        >
+                          <div className="flex items-center gap-2 min-w-0">
+                            {entry.avatarUrl ? (
+                              // eslint-disable-next-line @next/next/no-img-element
+                              <img
+                                src={entry.avatarUrl}
+                                alt={entry.displayName}
+                                className={`w-7 h-7 object-cover shrink-0 border ${
+                                  isHighlighted || isWinner
+                                    ? "border-bt-red"
+                                    : "border-bt-border"
+                                }`}
+                              />
+                            ) : (
+                              <div className="w-7 h-7 shrink-0 bg-bt-elevated border border-bt-border flex items-center justify-center font-mono text-[10px] font-bold text-bt-muted">
+                                {entry.displayName.slice(0, 2).toUpperCase()}
+                              </div>
+                            )}
+                            <span
+                              className={`text-xs font-medium truncate ${
+                                isHighlighted || isWinner
+                                  ? "text-white font-semibold"
+                                  : "text-white/90"
+                              }`}
+                            >
+                              {entry.displayName}
+                            </span>
+                          </div>
+                          <span
+                            className={`font-mono text-[11px] tabular-nums shrink-0 px-1.5 py-0.5 border ${
+                              isWinner || isHighlighted
+                                ? "border-bt-red/70 bg-bt-red/20 text-white font-bold"
+                                : "border-bt-border bg-bt-bg text-bt-muted"
+                            }`}
+                          >
+                            {entry.oddsLabel}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-3">
+                    <button
+                      type="button"
+                      onClick={spinRoulette}
+                      disabled={spinning}
+                      className="p5-btn bg-bt-red hover:bg-bt-red-hover disabled:opacity-60 text-white px-5 py-2.5 font-condensed font-bold uppercase tracking-wider text-sm inline-flex items-center justify-center gap-2 cursor-pointer"
+                    >
+                      {spinning ? (
+                        <>
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                          Spinning...
+                        </>
+                      ) : selectedWinner ? (
+                        <>
+                          <RotateCcw className="w-4 h-4" />
+                          Spin Again
+                        </>
+                      ) : (
+                        <>
+                          <Dices className="w-4 h-4" />
+                          Spin Buyer Roulette
+                        </>
+                      )}
+                    </button>
+
+                    <span className="font-mono text-[11px] text-bt-muted">
+                      {rouletteMode === "fairness"
+                        ? "Members behind group average carry higher odds"
+                        : "Every active member has equal odds"}
+                    </span>
+                  </div>
+
+                  {selectedWinner && !spinning && (
+                    <div className="p5-frame-sm bg-bt-red">
+                      <div className="bg-bt-red px-4 py-3.5 text-white flex flex-wrap items-center justify-between gap-3">
+                        <div className="flex items-center gap-3 min-w-0">
+                          {selectedWinner.avatarUrl ? (
+                            // eslint-disable-next-line @next/next/no-img-element
+                            <img
+                              src={selectedWinner.avatarUrl}
+                              alt={selectedWinner.displayName}
+                              className="w-10 h-10 object-cover border-2 border-white/80 shrink-0"
+                            />
+                          ) : (
+                            <div className="w-10 h-10 bg-black/30 border-2 border-white/80 flex items-center justify-center shrink-0">
+                              <Trophy className="w-5 h-5 text-white" />
+                            </div>
+                          )}
+                          <div className="min-w-0">
+                            <div className="font-mono text-[10px] uppercase tracking-[0.2em] text-white/85 flex items-center gap-1.5">
+                              <Trophy className="w-3 h-3 shrink-0" />
+                              ROULETTE VERDICT // {selectedWinner.oddsLabel} ODDS
+                            </div>
+                            <div className="font-display text-xl sm:text-2xl tracking-wide leading-tight mt-0.5 break-words">
+                              {selectedWinner.displayName.toUpperCase()} PAYS THE
+                              TAB FOR {result.name.toUpperCase()}!
+                            </div>
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={spinRoulette}
+                          className="px-3 py-1.5 bg-black/25 hover:bg-black/40 border border-white/40 font-mono text-[11px] font-bold uppercase tracking-wider text-white inline-flex items-center gap-1.5 shrink-0 cursor-pointer transition-colors"
+                        >
+                          <RotateCcw className="w-3.5 h-3.5" /> Spin Again
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
 
               {result.alternatives.length > 1 && (
                 <div className="border-t border-bt-border pt-4 space-y-2">

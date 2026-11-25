@@ -1326,6 +1326,7 @@ export function FamilyDashboard({
                         activeLibraries={activeLibraries}
                         waitlistLibraries={waitlistLibraries}
                         region={region}
+                        fairness={analysis.fairness}
                       />
                     )}
                   </>

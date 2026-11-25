@@ -81,6 +81,14 @@ export function ContributionBoard({ analysis }: ContributionBoardProps) {
     [analysis.fairness]
   );
 
+  const upNextAvatarUrl = useMemo(() => {
+    if (!upNextMember) return "";
+    return (
+      analysis.members.find((m) => m.memberId === upNextMember.memberId)
+        ?.avatarUrl ?? ""
+    );
+  }, [analysis.members, upNextMember]);
+
   const maxAbsDelta = useMemo(() => {
     if (analysis.fairness.members.length === 0) return 1;
     return Math.max(
@@ -557,6 +565,81 @@ export function ContributionBoard({ analysis }: ContributionBoardProps) {
                     )}
                   </div>
                 </div>
+
+                {/* Target Lock PFP Showcase */}
+                {upNextMember && (
+                  <div className="my-1 flex flex-col items-center justify-center py-2">
+                    <div className="relative h-28 w-28 flex items-center justify-center">
+                      {/* Outer Tactical Corner Brackets */}
+                      <span
+                        className="pointer-events-none absolute inset-0 border border-bt-red/40"
+                        aria-hidden="true"
+                      />
+                      <span
+                        className="pointer-events-none absolute -top-1 -left-1 h-3 w-3 border-t-2 border-l-2 border-bt-red"
+                        aria-hidden="true"
+                      />
+                      <span
+                        className="pointer-events-none absolute -top-1 -right-1 h-3 w-3 border-t-2 border-r-2 border-bt-red"
+                        aria-hidden="true"
+                      />
+                      <span
+                        className="pointer-events-none absolute -bottom-1 -left-1 h-3 w-3 border-b-2 border-l-2 border-bt-red"
+                        aria-hidden="true"
+                      />
+                      <span
+                        className="pointer-events-none absolute -bottom-1 -right-1 h-3 w-3 border-b-2 border-r-2 border-bt-red"
+                        aria-hidden="true"
+                      />
+
+                      {upNextAvatarUrl ? (
+                        /* eslint-disable-next-line @next/next/no-img-element */
+                        <img
+                          src={upNextAvatarUrl}
+                          alt={upNextMember.name}
+                          className="h-24 w-24 object-cover grayscale-[20%] contrast-110"
+                        />
+                      ) : (
+                        <div className="h-24 w-24 bg-bt-elevated flex items-center justify-center font-display text-3xl text-white">
+                          {upNextMember.name.slice(0, 2).toUpperCase()}
+                        </div>
+                      )}
+
+                      {/* Crosshair Overlay SVG */}
+                      <svg
+                        viewBox="0 0 112 112"
+                        className="pointer-events-none absolute inset-0 h-full w-full text-bt-red drop-shadow-[0_0_6px_rgba(232,0,45,0.75)]"
+                        fill="none"
+                        aria-hidden="true"
+                      >
+                        <circle
+                          cx="56"
+                          cy="56"
+                          r="38"
+                          stroke="currentColor"
+                          strokeWidth="1.5"
+                          strokeDasharray="6 4"
+                          opacity="0.85"
+                        />
+                        <circle
+                          cx="56"
+                          cy="56"
+                          r="12"
+                          stroke="currentColor"
+                          strokeWidth="1.5"
+                          opacity="0.9"
+                        />
+                        <line x1="56" y1="4" x2="56" y2="24" stroke="currentColor" strokeWidth="1.75" />
+                        <line x1="56" y1="88" x2="56" y2="108" stroke="currentColor" strokeWidth="1.75" />
+                        <line x1="4" y1="56" x2="24" y2="56" stroke="currentColor" strokeWidth="1.75" />
+                        <line x1="88" y1="56" x2="108" y2="56" stroke="currentColor" strokeWidth="1.75" />
+                      </svg>
+                    </div>
+                    <span className="mt-2 font-mono text-[9px] uppercase tracking-[0.22em] text-bt-red">
+                      TARGET LOCKED // CONTRIBUTION DUE
+                    </span>
+                  </div>
+                )}
 
                 <div className="border-t border-bt-red/25 pt-4 grid grid-cols-2 gap-3">
                   <div>

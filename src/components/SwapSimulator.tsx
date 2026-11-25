@@ -1,7 +1,8 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { simulateSwap } from "@/lib/analyzer";
+import type { DragEvent, KeyboardEvent } from "react";
+import { computeSlotCooldown, simulateSwap } from "@/lib/analyzer";
 import { MemberLibrary, SteamRegion, STEAM_REGIONS } from "@/lib/types";
 import {
   AlertTriangle,
@@ -9,9 +10,9 @@ import {
   ArrowRightLeft,
   CheckCircle2,
   Clock,
+  GripVertical,
   ShieldAlert,
   ShieldCheck,
-  Users,
 } from "lucide-react";
 
 interface SwapSimulatorProps {
@@ -21,17 +22,24 @@ interface SwapSimulatorProps {
   includeExcluded: boolean;
 }
 
+type RosterSide = "active" | "waitlist";
+
+interface DragPayload {
+  side: RosterSide;
+  id: string;
+}
+
 export function SwapSimulator({
   activeLibraries,
   waitlistLibraries,
   region,
   includeExcluded,
 }: SwapSimulatorProps) {
-  const [removeId, setRemoveId] = useState<string>(
-    activeLibraries[activeLibraries.length - 1]?.member.id ?? ""
-  );
-  const [addId, setAddId] = useState<string>(
-    waitlistLibraries[0]?.member.id ?? ""
+  const [removeId, setRemoveId] = useState<string | null>(null);
+  const [addId, setAddId] = useState<string | null>(null);
+  const [dragSource, setDragSource] = useState<DragPayload | null>(null);
+  const [dragOverTarget, setDragOverTarget] = useState<DragPayload | null>(
+    null
   );
 
   const sym = STEAM_REGIONS[region].symbol;
@@ -68,12 +76,78 @@ export function SwapSimulator({
     return map;
   }, [activeLibraries, waitlistLibraries, includeExcluded]);
 
+  const cooldownByMemberId = useMemo(() => {
+    const map = new Map<string, ReturnType<typeof computeSlotCooldown>>();
+    for (const lib of activeLibraries) {
+      map.set(lib.member.id, computeSlotCooldown(lib.member.joinDate));
+    }
+    return map;
+  }, [activeLibraries]);
+
+  const bestDefaultPair = useMemo(() => {
+    let best: {
+      removeId: string;
+      addId: string;
+      uniqueValueDelta: number;
+      uniqueGamesDelta: number;
+    } | null = null;
+
+    for (const activeLib of activeLibraries) {
+      for (const waitlistLib of waitlistLibraries) {
+        const result = simulateSwap(
+          activeLibraries,
+          activeLib.member.id,
+          waitlistLib,
+          region,
+          includeExcluded
+        );
+        if (!result) continue;
+
+        if (
+          !best ||
+          result.uniqueValueDelta > best.uniqueValueDelta ||
+          (result.uniqueValueDelta === best.uniqueValueDelta &&
+            result.uniqueGamesDelta > best.uniqueGamesDelta)
+        ) {
+          best = {
+            removeId: activeLib.member.id,
+            addId: waitlistLib.member.id,
+            uniqueValueDelta: result.uniqueValueDelta,
+            uniqueGamesDelta: result.uniqueGamesDelta,
+          };
+        }
+      }
+    }
+
+    return {
+      removeId:
+        best?.removeId ??
+        activeLibraries[activeLibraries.length - 1]?.member.id ??
+        "",
+      addId: best?.addId ?? waitlistLibraries[0]?.member.id ?? "",
+    };
+  }, [activeLibraries, waitlistLibraries, region, includeExcluded]);
+
+  const resolvedRemoveId = useMemo(() => {
+    if (removeId && activeLibraries.some((l) => l.member.id === removeId)) {
+      return removeId;
+    }
+    return bestDefaultPair.removeId || activeLibraries[0]?.member.id || "";
+  }, [removeId, activeLibraries, bestDefaultPair.removeId]);
+
+  const resolvedAddId = useMemo(() => {
+    if (addId && waitlistLibraries.some((l) => l.member.id === addId)) {
+      return addId;
+    }
+    return bestDefaultPair.addId || waitlistLibraries[0]?.member.id || "";
+  }, [addId, waitlistLibraries, bestDefaultPair.addId]);
+
   const simulation = useMemo(() => {
     const effectiveRemove =
-      activeLibraries.find((l) => l.member.id === removeId)?.member.id ??
+      activeLibraries.find((l) => l.member.id === resolvedRemoveId)?.member.id ??
       activeLibraries[0]?.member.id;
     const addLib =
-      waitlistLibraries.find((l) => l.member.id === addId) ??
+      waitlistLibraries.find((l) => l.member.id === resolvedAddId) ??
       waitlistLibraries[0];
     if (!effectiveRemove || !addLib) return null;
     return simulateSwap(
@@ -86,11 +160,16 @@ export function SwapSimulator({
   }, [
     activeLibraries,
     waitlistLibraries,
-    removeId,
-    addId,
+    resolvedRemoveId,
+    resolvedAddId,
     region,
     includeExcluded,
   ]);
+
+  const displayedActive = useMemo(
+    () => activeLibraries.slice(0, 6),
+    [activeLibraries]
+  );
 
   const displayedWaitlist = useMemo(
     () => waitlistLibraries.slice(0, 6),
@@ -100,17 +179,22 @@ export function SwapSimulator({
   const selectedOutLib = useMemo(
     () =>
       activeLibraries.find(
-        (l) => l.member.id === (simulation?.removedMemberId ?? removeId)
+        (l) => l.member.id === (simulation?.removedMemberId ?? resolvedRemoveId)
       ) ?? activeLibraries[0],
-    [activeLibraries, simulation?.removedMemberId, removeId]
+    [activeLibraries, simulation?.removedMemberId, resolvedRemoveId]
   );
 
   const selectedInLib = useMemo(
     () =>
-      displayedWaitlist.find(
-        (l) => l.member.id === (simulation?.addedMemberId ?? addId)
+      waitlistLibraries.find(
+        (l) => l.member.id === (simulation?.addedMemberId ?? resolvedAddId)
       ) ?? displayedWaitlist[0],
-    [displayedWaitlist, simulation?.addedMemberId, addId]
+    [
+      waitlistLibraries,
+      displayedWaitlist,
+      simulation?.addedMemberId,
+      resolvedAddId,
+    ]
   );
 
   if (displayedWaitlist.length === 0) {
@@ -138,6 +222,297 @@ export function SwapSimulator({
   const inStats = selectedInLib
     ? libraryStats.get(selectedInLib.member.id)
     : undefined;
+
+  const stagedOutId = simulation?.removedMemberId ?? resolvedRemoveId;
+  const stagedInId = simulation?.addedMemberId ?? resolvedAddId;
+
+  const handleDragStart = (
+    side: RosterSide,
+    id: string,
+    e: DragEvent<HTMLDivElement>
+  ) => {
+    const payload: DragPayload = { side, id };
+    setDragSource(payload);
+    setDragOverTarget(null);
+    e.dataTransfer.effectAllowed = "move";
+    e.dataTransfer.setData("application/json", JSON.stringify(payload));
+  };
+
+  const handleDragOver = (
+    targetSide: RosterSide,
+    targetId: string,
+    e: DragEvent<HTMLDivElement>
+  ) => {
+    if (!dragSource || dragSource.side === targetSide) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+    if (
+      dragOverTarget?.side !== targetSide ||
+      dragOverTarget?.id !== targetId
+    ) {
+      setDragOverTarget({ side: targetSide, id: targetId });
+    }
+  };
+
+  const handleDragLeave = (
+    targetSide: RosterSide,
+    targetId: string,
+    e: DragEvent<HTMLDivElement>
+  ) => {
+    if (!e.currentTarget.contains(e.relatedTarget as Node | null)) {
+      if (
+        dragOverTarget?.side === targetSide &&
+        dragOverTarget?.id === targetId
+      ) {
+        setDragOverTarget(null);
+      }
+    }
+  };
+
+  const handleDrop = (
+    targetSide: RosterSide,
+    targetId: string,
+    e: DragEvent<HTMLDivElement>
+  ) => {
+    e.preventDefault();
+    let source = dragSource;
+    if (!source) {
+      try {
+        const raw = e.dataTransfer.getData("application/json");
+        if (raw) source = JSON.parse(raw) as DragPayload;
+      } catch {
+        source = null;
+      }
+    }
+
+    if (source && source.side !== targetSide) {
+      if (source.side === "waitlist" && targetSide === "active") {
+        setAddId(source.id);
+        setRemoveId(targetId);
+      } else if (source.side === "active" && targetSide === "waitlist") {
+        setRemoveId(source.id);
+        setAddId(targetId);
+      }
+    }
+
+    setDragSource(null);
+    setDragOverTarget(null);
+  };
+
+  const handleDragEnd = () => {
+    setDragSource(null);
+    setDragOverTarget(null);
+  };
+
+  const handleCardSelect = (side: RosterSide, id: string) => {
+    if (side === "active") {
+      setRemoveId(id);
+    } else {
+      setAddId(id);
+    }
+  };
+
+  const handleCardKeyDown = (
+    side: RosterSide,
+    id: string,
+    e: KeyboardEvent<HTMLDivElement>
+  ) => {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      handleCardSelect(side, id);
+    }
+  };
+
+  const renderRosterColumn = (
+    side: RosterSide,
+    libs: MemberLibrary[],
+    heading: string,
+    emptyLabel: string,
+    stagedId: string
+  ) => {
+    const isActiveSide = side === "active";
+
+    return (
+      <div className="p5-frame bg-bt-border">
+        <div className="bg-bt-surface p-4 sm:p-5 space-y-3.5 h-full">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-bt-border pb-3">
+            <div className="flex items-center gap-2.5">
+              <span
+                className={`tier-rail h-5 w-1 ${
+                  isActiveSide ? "bg-bt-red" : "bg-emerald-500"
+                }`}
+              />
+              <h3 className="font-display text-xl tracking-wider uppercase text-white leading-none">
+                {heading}
+              </h3>
+            </div>
+            <span className="font-mono text-[10px] uppercase tracking-widest text-bt-muted">
+              Click or drag to pair
+            </span>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+            {Array.from({ length: 6 }, (_, idx) => {
+              const slotNumber = String(idx + 1).padStart(2, "0");
+              const lib = libs[idx];
+
+              if (!lib) {
+                return (
+                  <div
+                    key={`empty-${side}-${slotNumber}`}
+                    className="border border-dashed border-bt-border/80 bg-bt-bg/60 p-3.5 flex flex-col justify-between min-h-[126px]"
+                  >
+                    <span className="font-mono text-[10px] font-semibold uppercase tracking-widest text-bt-dim tabular-nums">
+                      SLOT {slotNumber}
+                    </span>
+                    <span className="font-condensed text-xs font-bold uppercase tracking-wider text-bt-muted">
+                      {emptyLabel}
+                    </span>
+                  </div>
+                );
+              }
+
+              const memberId = lib.member.id;
+              const isStaged = stagedId === memberId;
+              const isDragging =
+                dragSource?.side === side && dragSource?.id === memberId;
+              const isValidDrop =
+                dragSource !== null && dragSource.side !== side;
+              const isDropHovered =
+                dragOverTarget?.side === side &&
+                dragOverTarget?.id === memberId;
+
+              const stats = libraryStats.get(memberId) ?? {
+                gamesCount: lib.games.length,
+                rawValue: 0,
+              };
+              const cooldown = isActiveSide
+                ? cooldownByMemberId.get(memberId)
+                : undefined;
+              const initials = (lib.member.name || lib.personaName || "??")
+                .slice(0, 2)
+                .toUpperCase();
+
+              const frameClass = isDropHovered
+                ? isActiveSide
+                  ? "bg-bt-red ring-2 ring-white/80"
+                  : "bg-emerald-400 ring-2 ring-white/80"
+                : isStaged
+                ? isActiveSide
+                  ? "bg-bt-red"
+                  : "bg-emerald-500"
+                : isValidDrop
+                ? isActiveSide
+                  ? "bg-bt-red/70"
+                  : "bg-emerald-500/70"
+                : isActiveSide
+                ? "bg-bt-border hover:bg-bt-red/60"
+                : "bg-bt-border hover:bg-emerald-500/60";
+
+              return (
+                <div
+                  key={memberId}
+                  role="button"
+                  tabIndex={0}
+                  draggable
+                  onClick={() => handleCardSelect(side, memberId)}
+                  onKeyDown={(e) => handleCardKeyDown(side, memberId, e)}
+                  onDragStart={(e) => handleDragStart(side, memberId, e)}
+                  onDragOver={(e) => handleDragOver(side, memberId, e)}
+                  onDragLeave={(e) => handleDragLeave(side, memberId, e)}
+                  onDrop={(e) => handleDrop(side, memberId, e)}
+                  onDragEnd={handleDragEnd}
+                  aria-pressed={isStaged}
+                  className={`p5-frame-sm p5-frame-interactive cursor-grab active:cursor-grabbing text-left transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-white ${frameClass} ${
+                    isDragging ? "opacity-45" : ""
+                  }`}
+                >
+                  <div
+                    className={`bg-bt-elevated p-3.5 h-full min-h-[126px] flex flex-col justify-between gap-2.5 transition-colors ${
+                      isDropHovered
+                        ? isActiveSide
+                          ? "bg-bt-red/15"
+                          : "bg-emerald-500/15"
+                        : ""
+                    }`}
+                  >
+                    <div className="flex items-center justify-between gap-1.5">
+                      <span className="inline-flex items-center gap-1 font-mono text-[10px] font-semibold uppercase tracking-widest text-bt-muted tabular-nums">
+                        <GripVertical className="h-3 w-3 text-bt-dim" />
+                        {slotNumber}
+                      </span>
+
+                      <div className="flex items-center gap-1.5">
+                        {isActiveSide && cooldown && (
+                          <span
+                            className={`font-mono text-[10px] font-semibold uppercase tabular-nums ${
+                              cooldown.isSlotUnlocked
+                                ? "text-emerald-400"
+                                : "text-amber-300"
+                            }`}
+                          >
+                            {cooldown.isSlotUnlocked
+                              ? "Unlocked"
+                              : `${cooldown.daysUntilUnlock}d lock`}
+                          </span>
+                        )}
+                        {isStaged && (
+                          <span
+                            className={`p5-tag shrink-0 px-1.5 py-0.5 font-condensed text-[9px] font-bold uppercase tracking-widest ${
+                              isActiveSide
+                                ? "bg-bt-red text-white"
+                                : "bg-emerald-500 text-bt-bg"
+                            }`}
+                          >
+                            <span className="p5-unskew inline-block">
+                              {isActiveSide ? "OUT" : "IN"}
+                            </span>
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      {lib.avatarUrl ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img
+                          src={lib.avatarUrl}
+                          alt={lib.member.name}
+                          draggable={false}
+                          className="h-8 w-8 shrink-0 object-cover border border-bt-border"
+                        />
+                      ) : (
+                        <div className="h-8 w-8 shrink-0 border border-bt-border bg-bt-bg flex items-center justify-center font-mono text-[10px] font-semibold text-bt-muted">
+                          {initials}
+                        </div>
+                      )}
+                      <div className="min-w-0">
+                        <div className="truncate font-condensed text-sm font-bold uppercase tracking-wide text-white leading-tight">
+                          {lib.member.name}
+                        </div>
+                        <div className="truncate font-mono text-[10px] text-bt-muted tabular-nums">
+                          {stats.gamesCount} games
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center justify-between border-t border-bt-border pt-2">
+                      <span className="font-condensed text-[10px] font-bold uppercase tracking-widest text-bt-muted">
+                        Raw
+                      </span>
+                      <span className="font-mono text-xs font-semibold tabular-nums text-emerald-400">
+                        {formatAbsMoney(stats.rawValue)}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+    );
+  };
 
   return (
     <div className="space-y-6">
@@ -189,7 +564,7 @@ export function SwapSimulator({
                 </label>
                 <select
                   id="swap-out-select"
-                  value={simulation?.removedMemberId ?? removeId}
+                  value={stagedOutId}
                   onChange={(e) => setRemoveId(e.target.value)}
                   className="w-full cursor-pointer border border-bt-border bg-bt-bg px-3 py-2.5 font-mono text-sm text-white focus:border-bt-red focus:outline-none"
                 >
@@ -247,11 +622,11 @@ export function SwapSimulator({
                 </label>
                 <select
                   id="swap-in-select"
-                  value={simulation?.addedMemberId ?? addId}
+                  value={stagedInId}
                   onChange={(e) => setAddId(e.target.value)}
                   className="w-full cursor-pointer border border-bt-border bg-bt-bg px-3 py-2.5 font-mono text-sm text-white focus:border-bt-red focus:outline-none"
                 >
-                  {displayedWaitlist.map((lib) => (
+                  {waitlistLibraries.map((lib) => (
                     <option key={lib.member.id} value={lib.member.id}>
                       {lib.member.name} ({lib.games.length} games)
                     </option>
@@ -526,111 +901,22 @@ export function SwapSimulator({
         </>
       )}
 
-      {/* Waitlist Roster Cards (6-Slot Side-by-Side Grid) */}
-      <div className="space-y-3">
-        <div className="flex items-center justify-between gap-2">
-          <div className="flex items-center gap-2.5">
-            <span className="tier-rail h-5 w-1 bg-bt-red" />
-            <h3 className="font-display text-xl tracking-wider uppercase text-white leading-none">
-              WAITLIST ROSTER ({displayedWaitlist.length} / 6)
-            </h3>
-          </div>
-          <span className="inline-flex items-center gap-1.5 font-mono text-xs text-bt-muted">
-            <Users className="h-3.5 w-3.5 text-bt-red" />
-            Select a challenger to simulate
-          </span>
-        </div>
-
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
-          {Array.from({ length: 6 }, (_, idx) => {
-            const slotNumber = String(idx + 1).padStart(2, "0");
-            const lib = displayedWaitlist[idx];
-
-            if (!lib) {
-              return (
-                <div
-                  key={`empty-waitlist-${slotNumber}`}
-                  className="border border-dashed border-bt-border/80 bg-bt-bg/60 p-3.5 flex flex-col justify-between min-h-[112px]"
-                >
-                  <span className="font-mono text-[10px] font-semibold uppercase tracking-widest text-bt-dim tabular-nums">
-                    SLOT {slotNumber}
-                  </span>
-                  <span className="font-condensed text-xs font-bold uppercase tracking-wider text-bt-muted">
-                    OPEN WAITLIST
-                  </span>
-                </div>
-              );
-            }
-
-            const isSelected =
-              (simulation?.addedMemberId ?? addId) === lib.member.id;
-            const stats = libraryStats.get(lib.member.id) ?? {
-              gamesCount: lib.games.length,
-              rawValue: 0,
-            };
-            const initials = (lib.member.name || lib.personaName || "??")
-              .slice(0, 2)
-              .toUpperCase();
-
-            return (
-              <button
-                key={lib.member.id}
-                type="button"
-                onClick={() => setAddId(lib.member.id)}
-                className={`p5-frame-sm p5-frame-interactive cursor-pointer text-left transition-colors ${
-                  isSelected
-                    ? "bg-bt-red"
-                    : "bg-bt-border hover:bg-bt-red/60"
-                }`}
-              >
-                <div className="bg-bt-surface p-3.5 h-full min-h-[112px] flex flex-col justify-between gap-2.5">
-                  <div className="flex items-center justify-between gap-1.5">
-                    <span className="font-mono text-[10px] font-semibold uppercase tracking-widest text-bt-muted tabular-nums">
-                      {slotNumber}
-                    </span>
-                    {isSelected && (
-                      <span className="p5-tag shrink-0 bg-bt-red px-1.5 py-0.5 font-condensed text-[9px] font-bold uppercase tracking-widest text-white">
-                        <span className="p5-unskew inline-block">STAGED</span>
-                      </span>
-                    )}
-                  </div>
-
-                  <div className="flex items-center gap-2 min-w-0">
-                    {lib.avatarUrl ? (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img
-                        src={lib.avatarUrl}
-                        alt={lib.member.name}
-                        className="h-7 w-7 shrink-0 object-cover border border-bt-border"
-                      />
-                    ) : (
-                      <div className="h-7 w-7 shrink-0 border border-bt-border bg-bt-elevated flex items-center justify-center font-mono text-[10px] font-semibold text-bt-muted">
-                        {initials}
-                      </div>
-                    )}
-                    <div className="min-w-0">
-                      <div className="truncate font-condensed text-sm font-bold uppercase tracking-wide text-white leading-tight">
-                        {lib.member.name}
-                      </div>
-                      <div className="truncate font-mono text-[10px] text-bt-muted">
-                        {stats.gamesCount} games
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="flex items-center justify-between border-t border-bt-border pt-2">
-                    <span className="font-condensed text-[10px] font-bold uppercase tracking-widest text-bt-muted">
-                      Raw
-                    </span>
-                    <span className="font-mono text-xs font-semibold tabular-nums text-emerald-400">
-                      {formatAbsMoney(stats.rawValue)}
-                    </span>
-                  </div>
-                </div>
-              </button>
-            );
-          })}
-        </div>
+      {/* Side-by-Side IN THE FAMILY (Left) & WAITLIST (Right) Drag-and-Drop Cards */}
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-5">
+        {renderRosterColumn(
+          "active",
+          displayedActive,
+          `IN THE FAMILY · ${activeLibraries.length} / 6`,
+          "OPEN FAMILY SLOT",
+          stagedOutId
+        )}
+        {renderRosterColumn(
+          "waitlist",
+          displayedWaitlist,
+          `WAITLIST · ${displayedWaitlist.length} / 6`,
+          "OPEN WAITLIST",
+          stagedInId
+        )}
       </div>
     </div>
   );
