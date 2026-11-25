@@ -140,6 +140,24 @@ export const DEMO_WAITLIST_INPUTS: FamilyMemberInput[] = [
   },
 ];
 
+const DEMO_STEAM_INPUTS = new Set(
+  [...DEMO_ACTIVE_INPUTS, ...DEMO_WAITLIST_INPUTS].map((m) =>
+    m.steamUrlOrId.trim().replace(/\/+$/, "").toLowerCase()
+  )
+);
+
+export function isDemoSteamInput(value: string): boolean {
+  const normalized = value.trim().replace(/\/+$/, "").toLowerCase();
+  if (!normalized) return false;
+  return (
+    /^7656119800000001\d$/.test(normalized) || DEMO_STEAM_INPUTS.has(normalized)
+  );
+}
+
+export function isDemoRoster(list: FamilyMemberInput[]): boolean {
+  return list.length > 0 && list.every((m) => isDemoSteamInput(m.steamUrlOrId));
+}
+
 const DEMO_OWNERSHIP: Record<string, (keyof typeof DEMO_GAMES)[]> = {
   m1: [
     "eldenRing",

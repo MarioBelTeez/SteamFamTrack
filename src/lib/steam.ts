@@ -17,6 +17,19 @@ export interface MemberLookupWarning {
   reason: string;
 }
 
+export interface SteamProfilePreview {
+  steamId64: string;
+  personaName: string;
+  avatarUrl: string;
+  profileUrl: string;
+  gamesCount: number;
+  isLibraryPublic: boolean;
+  hint?: string;
+}
+
+const PRIVATE_LIBRARY_HINT =
+  'Steam "Game details" is Private. Set Profile → Edit Profile → Privacy Settings → Game details → Public.';
+
 export interface StoreBrowseItem {
   appid?: number;
   id?: number;
@@ -199,6 +212,68 @@ async function fetchOwnedGames(
     );
   }
   return games;
+}
+
+export async function resolveSteamProfilePreview(
+  input: string,
+  apiKey: string
+): Promise<SteamProfilePreview> {
+  const trimmed = input.trim();
+  if (!trimmed) {
+    throw new Error("Steam profile URL, vanity name, or SteamID64 is required");
+  }
+
+  const steamId64 = await resolveSteamId64(trimmed, apiKey);
+
+  const ownedGamesUrl = `https://api.steampowered.com/IPlayerService/GetOwnedGames/v1/?key=${encodeURIComponent(
+    apiKey
+  )}&steamid=${encodeURIComponent(
+    steamId64
+  )}&include_appinfo=0&include_played_free_games=0`;
+
+  const [summary, ownedRes] = await Promise.all([
+    fetchPlayerSummary(steamId64, apiKey),
+    fetch(ownedGamesUrl),
+  ]);
+
+  if (!ownedRes.ok) {
+    throw new Error(`Steam GetOwnedGames failed (${ownedRes.status})`);
+  }
+
+  const ownedData = await ownedRes.json();
+  const games = ownedData?.response?.games;
+
+  if (Array.isArray(games)) {
+    return {
+      steamId64,
+      personaName: summary.personaName,
+      avatarUrl: summary.avatarUrl,
+      profileUrl: summary.profileUrl,
+      gamesCount: games.length,
+      isLibraryPublic: true,
+    };
+  }
+
+  if (ownedData?.response?.game_count === 0) {
+    return {
+      steamId64,
+      personaName: summary.personaName,
+      avatarUrl: summary.avatarUrl,
+      profileUrl: summary.profileUrl,
+      gamesCount: 0,
+      isLibraryPublic: true,
+    };
+  }
+
+  return {
+    steamId64,
+    personaName: summary.personaName,
+    avatarUrl: summary.avatarUrl,
+    profileUrl: summary.profileUrl,
+    gamesCount: 0,
+    isLibraryPublic: false,
+    hint: PRIVATE_LIBRARY_HINT,
+  };
 }
 
 async function fetchAppDetailsFromSteam(

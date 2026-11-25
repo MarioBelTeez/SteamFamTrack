@@ -1,14 +1,19 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { type FormEvent, useCallback, useEffect, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { ContributionBoard } from "@/components/ContributionBoard";
 import { MemberEditorModal } from "@/components/MemberEditorModal";
 import { MonthlyHistory } from "@/components/MonthlyHistory";
 import { OverlapAndCatalog } from "@/components/OverlapAndCatalog";
 import { SaveFamilyModal } from "@/components/SaveFamilyModal";
 import { SwapSimulator } from "@/components/SwapSimulator";
-import { DEMO_ACTIVE_INPUTS, DEMO_WAITLIST_INPUTS } from "@/lib/demo-data";
+import {
+  DEMO_ACTIVE_INPUTS,
+  DEMO_WAITLIST_INPUTS,
+  isDemoRoster,
+} from "@/lib/demo-data";
 import {
   FamilyAnalysis,
   FamilyMemberInput,
@@ -23,6 +28,7 @@ import {
   ArrowRightLeft,
   ArrowUpRight,
   BarChart3,
+  Bookmark,
   Calendar,
   Check,
   ChevronRight,
@@ -97,8 +103,40 @@ interface FamilyDashboardProps {
   initialHasDatabase?: boolean;
 }
 
+interface RecentFamilyEntry {
+  slug: string;
+  name: string;
+  updatedAt: string;
+}
+
+const RECENT_FAMILIES_STORAGE_KEY = "sft_recent_families";
+const MAX_RECENT_FAMILIES = 5;
+
+function readRecentFamilies(): RecentFamilyEntry[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = window.localStorage.getItem(RECENT_FAMILIES_STORAGE_KEY);
+    if (!raw) return [];
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter(
+        (item): item is RecentFamilyEntry =>
+          Boolean(item) &&
+          typeof item === "object" &&
+          typeof (item as RecentFamilyEntry).slug === "string" &&
+          (item as RecentFamilyEntry).slug.trim().length > 0 &&
+          typeof (item as RecentFamilyEntry).name === "string" &&
+          typeof (item as RecentFamilyEntry).updatedAt === "string"
+      )
+      .slice(0, MAX_RECENT_FAMILIES);
+  } catch {
+    return [];
+  }
+}
+
 function isLikelyDemoRoster(list: FamilyMemberInput[]): boolean {
-  return list.every((m) => /^7656119800000001\d$/.test(m.steamUrlOrId.trim()));
+  return isDemoRoster(list);
 }
 
 export function FamilyDashboard({
@@ -106,6 +144,7 @@ export function FamilyDashboard({
   initialHasApiKey,
   initialHasDatabase,
 }: FamilyDashboardProps) {
+  const router = useRouter();
   const [activeTab, setActiveTab] = useState<TabId>("board");
   const [mode, setMode] = useState<"demo" | "live">(
     initialFamily &&
@@ -142,8 +181,48 @@ export function FamilyDashboard({
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [editorOpen, setEditorOpen] = useState(false);
+  const [editorStartFresh, setEditorStartFresh] = useState(false);
   const [saveModalOpen, setSaveModalOpen] = useState(false);
   const [copiedLink, setCopiedLink] = useState(false);
+  const [slugInput, setSlugInput] = useState("");
+  const [recentFamilies, setRecentFamilies] = useState<RecentFamilyEntry[]>([]);
+
+  const initialFamilySlug = initialFamily?.slug;
+  const initialFamilyName = initialFamily?.name;
+
+  useEffect(() => {
+    let cancelled = false;
+    const existing = readRecentFamilies();
+    if (initialFamilySlug && initialFamilyName) {
+      const entry: RecentFamilyEntry = {
+        slug: initialFamilySlug,
+        name: initialFamilyName,
+        updatedAt: new Date().toISOString(),
+      };
+      const next = [
+        entry,
+        ...existing.filter((item) => item.slug !== initialFamilySlug),
+      ].slice(0, MAX_RECENT_FAMILIES);
+      try {
+        window.localStorage.setItem(
+          RECENT_FAMILIES_STORAGE_KEY,
+          JSON.stringify(next)
+        );
+      } catch {
+        // ignore storage quota/privacy mode errors
+      }
+      queueMicrotask(() => {
+        if (!cancelled) setRecentFamilies(next);
+      });
+    } else {
+      queueMicrotask(() => {
+        if (!cancelled) setRecentFamilies(existing);
+      });
+    }
+    return () => {
+      cancelled = true;
+    };
+  }, [initialFamilySlug, initialFamilyName]);
 
   useEffect(() => {
     fetch("/api/analyze")
@@ -264,10 +343,23 @@ export function FamilyDashboard({
 
   const handleSaveMembers = async (
     nextMembers: FamilyMemberInput[],
-    nextWaitlist: FamilyMemberInput[]
+    nextWaitlist: FamilyMemberInput[],
+    options?: { switchToLive?: boolean }
   ) => {
     setMembers(nextMembers);
     setWaitlist(nextWaitlist);
+    setNotice(null);
+
+    const shouldSwitchToLive =
+      Boolean(options?.switchToLive) ||
+      (mode === "demo" &&
+        hasApiKey &&
+        nextMembers.length > 0 &&
+        !isLikelyDemoRoster(nextMembers));
+
+    if (shouldSwitchToLive) {
+      setMode("live");
+    }
 
     if (!initialFamily) return;
     const key = getEditKeyForSlug(initialFamily.slug);
@@ -342,6 +434,33 @@ export function FamilyDashboard({
     navigator.clipboard.writeText(window.location.href);
     setCopiedLink(true);
     setTimeout(() => setCopiedLink(false), 2000);
+  };
+
+  const handleSwitchToLive = () => {
+    if (isLikelyDemoRoster(members)) {
+      setEditorStartFresh(true);
+      setEditorOpen(true);
+      setNotice(
+        "Paste at least 1 real Steam profile URL or SteamID64 to switch to Live API mode."
+      );
+      return;
+    }
+    setNotice(null);
+    setMode("live");
+  };
+
+  const handleJumpToSlug = (e: FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    const raw = slugInput.trim();
+    if (!raw) return;
+    const afterPrefix = raw.includes("/f/") ? raw.split("/f/").pop() ?? "" : raw;
+    const cleanSlug = afterPrefix
+      .replace(/^\/+|\/+$/g, "")
+      .split(/[?#]/)[0]
+      .trim()
+      .toLowerCase();
+    if (!cleanSlug) return;
+    router.push(`/f/${encodeURIComponent(cleanSlug)}`);
   };
 
   const activeNav =
@@ -420,6 +539,7 @@ export function FamilyDashboard({
               <button
                 type="button"
                 onClick={() => {
+                  setNotice(null);
                   setMode("demo");
                   setWarnings([]);
                 }}
@@ -433,7 +553,7 @@ export function FamilyDashboard({
               </button>
               <button
                 type="button"
-                onClick={() => setMode("live")}
+                onClick={handleSwitchToLive}
                 title={
                   hasApiKey
                     ? "Fetch live Steam profiles"
@@ -466,7 +586,10 @@ export function FamilyDashboard({
             {/* Edit Roster */}
             <button
               type="button"
-              onClick={() => setEditorOpen(true)}
+              onClick={() => {
+                setEditorStartFresh(false);
+                setEditorOpen(true);
+              }}
               className="cursor-pointer inline-flex items-center gap-1.5 bg-bt-elevated border border-bt-border px-3 py-1.5 font-condensed text-xs font-bold uppercase tracking-wider text-white hover:border-bt-red transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-bt-red"
             >
               <Users className="h-3.5 w-3.5 text-bt-red" />
@@ -729,7 +852,57 @@ export function FamilyDashboard({
               </div>
             )}
 
-            {/* 4. Minimal Studio Signature Footer */}
+            {/* 4. Recently Visited Saved Groups */}
+            {recentFamilies.length > 0 && (
+              <div className="bg-bt-surface border border-bt-border p-3.5 space-y-2.5">
+                <div className="flex items-center justify-between gap-2 pb-2 border-b border-bt-border/80">
+                  <span className="inline-flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-[0.2em] text-bt-muted">
+                    <Bookmark className="h-3 w-3 text-bt-red" />
+                    SAVED GROUPS
+                  </span>
+                  <span className="font-mono text-[10px] text-bt-dim">
+                    {recentFamilies.length}
+                  </span>
+                </div>
+
+                <ul className="space-y-1.5">
+                  {recentFamilies.map((fam) => {
+                    const isCurrent = initialFamily?.slug === fam.slug;
+                    return (
+                      <li key={fam.slug}>
+                        <Link
+                          href={`/f/${fam.slug}`}
+                          aria-current={isCurrent ? "page" : undefined}
+                          className={`cursor-pointer group flex items-center justify-between gap-2 px-2.5 py-2 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-bt-red ${
+                            isCurrent
+                              ? "bg-bt-elevated border-l-[3px] border-l-bt-red border-y border-r border-y-bt-border border-r-bt-border text-white"
+                              : "bg-bt-bg/70 hover:bg-bt-elevated border border-bt-border/80 hover:border-bt-red/60 text-bt-muted hover:text-white"
+                          }`}
+                        >
+                          <span className="min-w-0">
+                            <span className="block font-condensed text-xs font-bold uppercase tracking-wider text-white truncate">
+                              {fam.name}
+                            </span>
+                            <span className="block font-mono text-[10px] text-bt-dim truncate">
+                              /f/{fam.slug}
+                            </span>
+                          </span>
+                          {isCurrent ? (
+                            <span className="shrink-0 font-mono text-[9px] uppercase tracking-widest text-bt-red font-medium">
+                              ACTIVE
+                            </span>
+                          ) : (
+                            <ArrowUpRight className="h-3.5 w-3.5 shrink-0 text-bt-dim group-hover:text-bt-red transition-colors" />
+                          )}
+                        </Link>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </div>
+            )}
+
+            {/* 5. Minimal Studio Signature Footer */}
             <div className="hidden xl:block pt-2 border-t border-bt-border/60 font-mono text-[10px] tracking-[0.2em] text-bt-dim uppercase">
               BELTEEZ STUDIO // STEAM FAMILY ANALYZER
             </div>
@@ -757,6 +930,76 @@ export function FamilyDashboard({
                 <span className="text-bt-muted">{activeRegion.label}</span>
               </div>
             </div>
+
+            {/* Demo-to-Live Onboarding Banner */}
+            {!initialFamily && mode === "demo" && (
+              <div className="p5-frame bg-bt-red/75">
+                <div className="bg-bt-surface bg-gradient-to-r from-bt-red/12 via-bt-surface to-bt-surface px-5 py-4 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+                  <div className="min-w-0 space-y-1.5">
+                    <div className="flex flex-wrap items-center gap-2.5">
+                      <span className="p5-tag bg-bt-red px-2.5 py-0.5">
+                        <span className="p5-unskew font-mono text-[10px] font-medium uppercase tracking-[0.16em] text-white">
+                          SAMPLE FAMILY
+                        </span>
+                      </span>
+                      <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-bt-muted">
+                        {hasApiKey ? "LIVE STEAM API READY" : "DEMO SANDBOX"}
+                      </span>
+                    </div>
+                    <h3 className="font-condensed text-lg sm:text-xl font-bold uppercase tracking-wider text-white leading-tight">
+                      Viewing Demo Data — Load Your Real Steam Family
+                    </h3>
+                    <p className="font-mono text-xs text-bt-muted leading-relaxed">
+                      Live Steam API fetches real member libraries, regional
+                      store prices, and Family Sharing exclusions automatically.
+                    </p>
+                  </div>
+
+                  <div className="flex flex-col sm:flex-row sm:items-center gap-2.5 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEditorStartFresh(true);
+                        setEditorOpen(true);
+                      }}
+                      className="cursor-pointer p5-btn inline-flex items-center justify-center gap-2 bg-bt-red hover:bg-bt-red-hover px-4 py-2 font-condensed text-xs sm:text-sm font-extrabold uppercase tracking-widest text-white transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-bt-red"
+                    >
+                      <Users className="h-4 w-4" />
+                      <span>Load Your Steam Family</span>
+                    </button>
+
+                    <form
+                      onSubmit={handleJumpToSlug}
+                      className="flex items-stretch bg-bt-bg border border-bt-border focus-within:border-bt-red transition-colors"
+                    >
+                      <label
+                        htmlFor="quick-slug-jump"
+                        className="flex items-center px-2.5 font-mono text-[11px] tracking-wider text-bt-dim border-r border-bt-border select-none whitespace-nowrap"
+                      >
+                        Open /f/
+                      </label>
+                      <input
+                        id="quick-slug-jump"
+                        type="text"
+                        value={slugInput}
+                        onChange={(e) => setSlugInput(e.target.value)}
+                        placeholder="group-slug"
+                        aria-label="Open saved family by slug"
+                        className="w-28 sm:w-32 bg-transparent px-2.5 py-1.5 font-mono text-xs text-white placeholder:text-bt-dim focus:outline-none"
+                      />
+                      <button
+                        type="submit"
+                        disabled={!slugInput.trim()}
+                        className="cursor-pointer inline-flex items-center gap-1 bg-bt-elevated hover:bg-bt-red border-l border-bt-border px-3 py-1.5 font-condensed text-xs font-bold uppercase tracking-wider text-white transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-bt-elevated focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-bt-red"
+                      >
+                        <span>Go</span>
+                        <ArrowUpRight className="h-3.5 w-3.5" />
+                      </button>
+                    </form>
+                  </div>
+                </div>
+              </div>
+            )}
 
             {/* Notice Banner */}
             {notice && (
@@ -814,7 +1057,10 @@ export function FamilyDashboard({
 
                   <button
                     type="button"
-                    onClick={() => setEditorOpen(true)}
+                    onClick={() => {
+                      setEditorStartFresh(false);
+                      setEditorOpen(true);
+                    }}
                     className="cursor-pointer shrink-0 inline-flex items-center gap-1.5 bg-bt-elevated border border-amber-400/50 hover:border-amber-300 px-3 py-1.5 font-condensed text-xs font-bold uppercase tracking-wider text-amber-100 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-400"
                   >
                     <Users className="h-3.5 w-3.5 text-amber-400" />
@@ -896,11 +1142,16 @@ export function FamilyDashboard({
       </main>
 
       <MemberEditorModal
-        key={`${editorOpen}-${members.length}-${waitlist.length}`}
+        key={`${editorOpen}-${editorStartFresh}-${members.length}-${waitlist.length}`}
         isOpen={editorOpen}
-        onClose={() => setEditorOpen(false)}
+        onClose={() => {
+          setEditorOpen(false);
+          setEditorStartFresh(false);
+        }}
         members={members}
         waitlist={waitlist}
+        hasApiKey={hasApiKey}
+        startFreshPrompt={editorStartFresh}
         onSave={handleSaveMembers}
       />
 
