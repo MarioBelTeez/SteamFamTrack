@@ -11,13 +11,13 @@ import {
   round2,
 } from "./types";
 
-const EMBED_COLOR = 0x1b2838; // Steam dark blue
+const EMBED_COLOR = 0xe8002d; // BelTeez Crimson
 const ACCENT_GREEN = 0x57f287;
 const ACCENT_AMBER = 0xfee75c;
 const ACCENT_RED = 0xed4245;
 
-const MISSING_SLUG_MESSAGE =
-  "No family slug provided and no default family linked. Run `/link <steam_url> <family_slug>` to set a default family, or pass `slug:<family-slug>` directly to this command.";
+const LINK_REQUIRED_MESSAGE =
+  "Link your Steam account first with `/link <steam_url>` (must match a Steam account saved in a SteamFamTrack family).";
 
 function getApiBaseUrl(): string {
   const raw =
@@ -41,36 +41,128 @@ function getSupabaseClient() {
   });
 }
 
-async function resolveFamilySlug(
+async function resolveFamilyForDiscordUser(
   discordUserId: string,
-  providedSlug: string | null
-): Promise<string | null> {
-  if (providedSlug && providedSlug.trim()) {
-    return providedSlug.trim().toLowerCase();
+  familyFilter: string | null
+): Promise<SavedFamilyData | string> {
+  const db = getSupabaseClient();
+  if (!db) {
+    return "Supabase is not configured on this bot (`SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY` missing).";
   }
 
-  const db = getSupabaseClient();
-  if (!db) return null;
-
-  const { data, error } = await db
+  const { data: linkRow, error: linkErr } = await db
     .from("discord_links")
-    .select("default_family_slug")
+    .select("steam_id64, steam_input")
     .eq("discord_user_id", discordUserId)
     .maybeSingle();
 
-  if (error || !data?.default_family_slug) return null;
-  return String(data.default_family_slug).trim().toLowerCase();
-}
-
-async function fetchFamilyBySlug(slug: string): Promise<SavedFamilyData> {
-  const res = await fetch(
-    `${getApiBaseUrl()}/api/families/${encodeURIComponent(slug)}`
-  );
-  const body = (await res.json()) as SavedFamilyData & { error?: string };
-  if (!res.ok) {
-    throw new Error(body.error || `Failed to load family "${slug}" (${res.status})`);
+  if (linkErr) {
+    return `Failed to read Discord link: ${linkErr.message}`;
   }
-  return body;
+
+  const steamId64 = linkRow?.steam_id64 ? String(linkRow.steam_id64) : null;
+  if (!steamId64) {
+    return LINK_REQUIRED_MESSAGE;
+  }
+
+  const [{ data: ownedRows }, { data: memberRows }] = await Promise.all([
+    db
+      .from("families")
+      .select("id, slug, name, region, created_at, updated_at")
+      .eq("owner_steam_id64", steamId64),
+    db
+      .from("family_members")
+      .select("family_id, is_waitlist")
+      .eq("steam_id64", steamId64),
+  ]);
+
+  const candidateIds: string[] = [];
+  for (const r of ownedRows ?? []) {
+    if (r.id && !candidateIds.includes(r.id)) candidateIds.push(r.id);
+  }
+  for (const m of memberRows ?? []) {
+    if (!m.is_waitlist && m.family_id && !candidateIds.includes(m.family_id)) {
+      candidateIds.push(m.family_id);
+    }
+  }
+  for (const m of memberRows ?? []) {
+    if (m.is_waitlist && m.family_id && !candidateIds.includes(m.family_id)) {
+      candidateIds.push(m.family_id);
+    }
+  }
+
+  if (candidateIds.length === 0) {
+    return `Your linked Steam account (\`${steamId64}\`) isn't in any saved SteamFamTrack family yet. Sign in at ${getApiBaseUrl()} and save your family first.`;
+  }
+
+  const { data: families } = await db
+    .from("families")
+    .select("id, slug, name, region, created_at, updated_at")
+    .in("id", candidateIds);
+
+  if (!families || families.length === 0) {
+    return "No accessible SteamFamTrack family found for your Steam account.";
+  }
+
+  let chosen = families.find((f) => f.id === candidateIds[0]) ?? families[0];
+  if (familyFilter && familyFilter.trim()) {
+    const q = familyFilter.trim().toLowerCase();
+    const matched = families.find(
+      (f) => f.slug.toLowerCase() === q || f.name.toLowerCase().includes(q)
+    );
+    if (!matched) {
+      const names = families.map((f) => `\`${f.name}\``).join(", ");
+      return `Could not find a family matching "${familyFilter}". Accessible families: ${names}`;
+    }
+    chosen = matched;
+  }
+
+  const [{ data: members }, { data: snapshots }] = await Promise.all([
+    db
+      .from("family_members")
+      .select("id, display_name, steam_input, join_date, is_waitlist, position")
+      .eq("family_id", chosen.id)
+      .order("position", { ascending: true }),
+    db
+      .from("monthly_snapshots")
+      .select(
+        "id, snapshot_month, region, unique_games_count, unique_catalog_value, sum_copies_count, sum_copies_value, member_breakdown, created_at"
+      )
+      .eq("family_id", chosen.id)
+      .order("snapshot_month", { ascending: false }),
+  ]);
+
+  const mappedMembers = (members ?? []).map((r) => ({
+    id: r.id,
+    name: r.display_name,
+    steamUrlOrId: r.steam_input,
+    joinDate: r.join_date ?? undefined,
+    isWaitlist: Boolean(r.is_waitlist),
+  }));
+
+  return {
+    id: chosen.id,
+    slug: chosen.slug,
+    name: chosen.name,
+    region: chosen.region,
+    members: mappedMembers.filter((m) => !m.isWaitlist),
+    waitlist: mappedMembers.filter((m) => m.isWaitlist),
+    snapshots: (snapshots ?? []).map((s) => ({
+      id: s.id,
+      snapshotMonth: s.snapshot_month,
+      region: s.region,
+      uniqueGamesCount: Number(s.unique_games_count),
+      uniqueCatalogValue: Number(s.unique_catalog_value),
+      sumCopiesCount: Number(s.sum_copies_count),
+      sumCopiesValue: Number(s.sum_copies_value),
+      memberBreakdown: Array.isArray(s.member_breakdown)
+        ? s.member_breakdown
+        : [],
+      createdAt: s.created_at,
+    })),
+    createdAt: chosen.created_at,
+    updatedAt: chosen.updated_at,
+  };
 }
 
 async function runAnalyze(family: SavedFamilyData): Promise<AnalyzeResponse> {
@@ -268,10 +360,6 @@ async function handleLink(
   interaction: ChatInputCommandInteraction
 ): Promise<void> {
   const steamUrl = interaction.options.getString("steam_url", true).trim();
-  const familySlug = interaction.options
-    .getString("family_slug", false)
-    ?.trim()
-    .toLowerCase();
 
   const db = getSupabaseClient();
   if (!db) {
@@ -285,11 +373,31 @@ async function handleLink(
 
   await interaction.deferReply({ ephemeral: true });
 
+  const resolveRes = await fetch(`${getApiBaseUrl()}/api/steam/resolve`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ input: steamUrl }),
+  });
+  const resolved = (await resolveRes.json()) as {
+    steamId64?: string;
+    personaName?: string;
+    isLibraryPublic?: boolean;
+    gamesCount?: number;
+    error?: string;
+  };
+
+  if (!resolveRes.ok || !resolved.steamId64) {
+    await interaction.editReply({
+      content: `Could not resolve that Steam profile: ${resolved.error || "Unknown error"}`,
+    });
+    return;
+  }
+
   const { error } = await db.from("discord_links").upsert(
     {
       discord_user_id: interaction.user.id,
       steam_input: steamUrl,
-      default_family_slug: familySlug || null,
+      steam_id64: resolved.steamId64,
       updated_at: new Date().toISOString(),
     },
     { onConflict: "discord_user_id" }
@@ -306,15 +414,20 @@ async function handleLink(
     .setColor(ACCENT_GREEN)
     .setTitle("Steam Account Linked")
     .addFields(
-      { name: "Steam Profile", value: `\`${steamUrl}\``, inline: false },
       {
-        name: "Default Family Slug",
-        value: familySlug
-          ? `\`${familySlug}\``
-          : "_None (pass `slug:<family-slug>` or re-run `/link <steam_url> <family_slug>` to set a default)_",
+        name: "Steam Persona",
+        value: `**${resolved.personaName || resolved.steamId64}** (\`${resolved.steamId64}\`)`,
+        inline: false,
+      },
+      {
+        name: "Library Visibility",
+        value: resolved.isLibraryPublic
+          ? `✅ Public (${resolved.gamesCount ?? 0} games)`
+          : "⚠️ Private Game Details (ask friends to set Game Details → Public)",
         inline: false,
       }
     )
+    .setFooter({ text: "Run /family board to view your Steam Family!" })
     .setTimestamp();
 
   await interaction.editReply({ embeds: [embed] });
@@ -325,15 +438,17 @@ async function handleFamilyBoard(
 ): Promise<void> {
   await interaction.deferReply();
 
-  const providedSlug = interaction.options.getString("slug", false);
-  const slug = await resolveFamilySlug(interaction.user.id, providedSlug);
+  const familyFilter = interaction.options.getString("family", false);
+  const family = await resolveFamilyForDiscordUser(
+    interaction.user.id,
+    familyFilter
+  );
 
-  if (!slug) {
-    await interaction.editReply({ content: MISSING_SLUG_MESSAGE });
+  if (typeof family === "string") {
+    await interaction.editReply({ content: family });
     return;
   }
 
-  const family = await fetchFamilyBySlug(slug);
   const result = await runAnalyze(family);
 
   const { analysis } = result;
@@ -382,7 +497,7 @@ async function handleFamilyBoard(
       }
     )
     .setFooter({
-      text: `Family slug: ${slug} · Live Steam`,
+      text: `${family.name} · Live Steam`,
     })
     .setTimestamp();
 
@@ -394,18 +509,20 @@ async function handleFamilyMonthly(
 ): Promise<void> {
   await interaction.deferReply();
 
-  const providedSlug = interaction.options.getString("slug", false);
-  const slug = await resolveFamilySlug(interaction.user.id, providedSlug);
+  const familyFilter = interaction.options.getString("family", false);
+  const family = await resolveFamilyForDiscordUser(
+    interaction.user.id,
+    familyFilter
+  );
 
-  if (!slug) {
-    await interaction.editReply({ content: MISSING_SLUG_MESSAGE });
+  if (typeof family === "string") {
+    await interaction.editReply({ content: family });
     return;
   }
 
-  const family = await fetchFamilyBySlug(slug);
   if (!family.snapshots || family.snapshots.length === 0) {
     await interaction.editReply({
-      content: `No monthly snapshots have been saved yet for **${family.name}** (\`${slug}\`).`,
+      content: `No monthly snapshots have been saved yet for **${family.name}**.`,
     });
     return;
   }
@@ -467,8 +584,8 @@ async function handleFamilyMonthly(
     )
     .setFooter({
       text: prev
-        ? `Compared against ${prev.snapshotMonth} · slug: ${slug}`
-        : `First saved snapshot · slug: ${slug}`,
+        ? `Compared against ${prev.snapshotMonth} · ${family.name}`
+        : `First saved snapshot · ${family.name}`,
     })
     .setTimestamp();
 
@@ -482,16 +599,18 @@ async function handleFamilySimulate(
 
   const removeName = interaction.options.getString("remove_name", true);
   const addName = interaction.options.getString("add_name", true);
-  const providedSlug = interaction.options.getString("slug", false);
+  const familyFilter = interaction.options.getString("family", false);
 
-  const slug = await resolveFamilySlug(interaction.user.id, providedSlug);
+  const family = await resolveFamilyForDiscordUser(
+    interaction.user.id,
+    familyFilter
+  );
 
-  if (!slug) {
-    await interaction.editReply({ content: MISSING_SLUG_MESSAGE });
+  if (typeof family === "string") {
+    await interaction.editReply({ content: family });
     return;
   }
 
-  const family = await fetchFamilyBySlug(slug);
   const result = await runAnalyze(family);
 
   const target = findMemberLibrary(result.activeLibraries, removeName);
@@ -588,15 +707,17 @@ async function handleFamilyWaitlist(
 ): Promise<void> {
   await interaction.deferReply();
 
-  const providedSlug = interaction.options.getString("slug", false);
-  const slug = await resolveFamilySlug(interaction.user.id, providedSlug);
+  const familyFilter = interaction.options.getString("family", false);
+  const family = await resolveFamilyForDiscordUser(
+    interaction.user.id,
+    familyFilter
+  );
 
-  if (!slug) {
-    await interaction.editReply({ content: MISSING_SLUG_MESSAGE });
+  if (typeof family === "string") {
+    await interaction.editReply({ content: family });
     return;
   }
 
-  const family = await fetchFamilyBySlug(slug);
   const activeMembers = family.members;
   const waitlistMembers = family.waitlist;
   const titleName = family.name;
@@ -613,7 +734,7 @@ async function handleFamilyWaitlist(
     .setTitle(`⏳ ${titleName} — Waitlist & 1-Year Slot Cooldowns`)
     .addFields(
       {
-        name: `Waitlisted Friends (${waitlistMembers.length})`,
+        name: `Waitlisted Friends (${waitlistMembers.length}/6)`,
         value:
           waitlistLines.length > 0
             ? waitlistLines.join("\n")
@@ -630,7 +751,7 @@ async function handleFamilyWaitlist(
       }
     )
     .setFooter({
-      text: `Family slug: ${slug} · Live Steam`,
+      text: `${family.name} · Live Steam`,
     })
     .setTimestamp();
 

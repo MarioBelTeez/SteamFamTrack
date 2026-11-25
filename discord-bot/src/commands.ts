@@ -4,19 +4,13 @@ export const commands = [
   new SlashCommandBuilder()
     .setName("link")
     .setDescription(
-      "Link your Discord account to your Steam profile and optional default family"
+      "Link your Discord account to your Steam profile (auto-detects your SteamFamTrack family)"
     )
     .addStringOption((opt) =>
       opt
         .setName("steam_url")
         .setDescription("Your Steam profile URL, vanity name, or 17-digit SteamID64")
         .setRequired(true)
-    )
-    .addStringOption((opt) =>
-      opt
-        .setName("family_slug")
-        .setDescription("Optional default SteamFamTrack family slug")
-        .setRequired(false)
     ),
 
   new SlashCommandBuilder()
@@ -28,8 +22,8 @@ export const commands = [
         .setDescription("Show the Steam Family contribution leaderboard")
         .addStringOption((opt) =>
           opt
-            .setName("slug")
-            .setDescription("Family slug (uses your linked default or Demo Mode if omitted)")
+            .setName("family")
+            .setDescription("Optional family name (auto-detects your linked Steam Family if omitted)")
             .setRequired(false)
         )
     )
@@ -39,8 +33,8 @@ export const commands = [
         .setDescription("Show the latest monthly snapshot and delta vs previous month")
         .addStringOption((opt) =>
           opt
-            .setName("slug")
-            .setDescription("Family slug (uses your linked default if omitted)")
+            .setName("family")
+            .setDescription("Optional family name (auto-detects your linked Steam Family if omitted)")
             .setRequired(false)
         )
     )
@@ -62,8 +56,8 @@ export const commands = [
         )
         .addStringOption((opt) =>
           opt
-            .setName("slug")
-            .setDescription("Family slug (uses your linked default or Demo Mode if omitted)")
+            .setName("family")
+            .setDescription("Optional family name (auto-detects your linked Steam Family if omitted)")
             .setRequired(false)
         )
     )
@@ -73,8 +67,8 @@ export const commands = [
         .setDescription("List waitlisted members and active members' 1-year slot unlock dates")
         .addStringOption((opt) =>
           opt
-            .setName("slug")
-            .setDescription("Family slug (uses your linked default or Demo Mode if omitted)")
+            .setName("family")
+            .setDescription("Optional family name (auto-detects your linked Steam Family if omitted)")
             .setRequired(false)
         )
     ),
