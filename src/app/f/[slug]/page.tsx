@@ -1,88 +1,98 @@
 import { Suspense } from "react";
+import Link from "next/link";
 import { notFound } from "next/navigation";
-import { Loader2 } from "lucide-react";
+import { ArrowLeft, Loader2, Lock, LogIn } from "lucide-react";
 import { FamilyDashboard } from "@/components/FamilyDashboard";
-import { getSteamFamDb, hasSupabaseConfig } from "@/lib/supabase";
 import {
-  FamilyMemberInput,
-  MonthlySnapshotRecord,
-  STEAM_REGIONS,
-  SavedFamilyData,
-  SteamRegion,
-} from "@/lib/types";
+  canViewFamily,
+  getSteamUserFromCookies,
+  loadFamilyRecord,
+} from "@/lib/family-access";
+import { getSteamFamDb, hasSupabaseConfig } from "@/lib/supabase";
 
 interface PageProps {
   params: Promise<{ slug: string }>;
 }
 
-async function loadFamily(slug: string): Promise<SavedFamilyData | null> {
-  const db = getSteamFamDb();
-  if (!db) return null;
-
-  const { data: family } = await db
-    .from("families")
-    .select("id, slug, name, region, created_at, updated_at")
-    .eq("slug", slug)
-    .maybeSingle();
-
-  if (!family) return null;
-
-  const [{ data: memberRows }, { data: snapshotRows }] = await Promise.all([
-    db
-      .from("family_members")
-      .select("id, display_name, steam_input, join_date, is_waitlist, position")
-      .eq("family_id", family.id)
-      .order("position", { ascending: true }),
-    db
-      .from("monthly_snapshots")
-      .select(
-        "id, snapshot_month, region, unique_games_count, unique_catalog_value, sum_copies_count, sum_copies_value, member_breakdown, created_at"
-      )
-      .eq("family_id", family.id)
-      .order("snapshot_month", { ascending: false }),
-  ]);
-
-  const allMembers: FamilyMemberInput[] = (memberRows ?? []).map((r) => ({
-    id: r.id,
-    name: r.display_name,
-    steamUrlOrId: r.steam_input,
-    joinDate: r.join_date ?? undefined,
-    isWaitlist: Boolean(r.is_waitlist),
-  }));
-
-  const snapshots: MonthlySnapshotRecord[] = (snapshotRows ?? []).map((s) => ({
-    id: s.id,
-    snapshotMonth: s.snapshot_month,
-    region: (s.region in STEAM_REGIONS ? s.region : "ma") as SteamRegion,
-    uniqueGamesCount: Number(s.unique_games_count),
-    uniqueCatalogValue: Number(s.unique_catalog_value),
-    sumCopiesCount: Number(s.sum_copies_count),
-    sumCopiesValue: Number(s.sum_copies_value),
-    memberBreakdown: Array.isArray(s.member_breakdown)
-      ? s.member_breakdown
-      : [],
-    createdAt: s.created_at,
-  }));
-
-  return {
-    id: family.id,
-    slug: family.slug,
-    name: family.name,
-    region: (family.region in STEAM_REGIONS ? family.region : "ma") as SteamRegion,
-    members: allMembers.filter((m) => !m.isWaitlist),
-    waitlist: allMembers.filter((m) => m.isWaitlist),
-    snapshots,
-    createdAt: family.created_at,
-    updatedAt: family.updated_at,
-  };
-}
-
 async function SavedFamilyContent({ params }: PageProps) {
   const { slug } = await params;
-  const family = await loadFamily(slug);
+  const [user, db] = await Promise.all([
+    getSteamUserFromCookies(),
+    Promise.resolve(getSteamFamDb()),
+  ]);
+
+  const family = db
+    ? await loadFamilyRecord(db, { slug }, user?.steamId64 ?? null)
+    : null;
+
   if (!family) {
     notFound();
   }
+
+  if (!user || !canViewFamily(family, user.steamId64)) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-bt-bg px-6 py-12">
+        <div className="w-full max-w-md p5-frame bg-bt-red/70">
+          <div className="bg-bt-surface p-7 sm:p-8 flex flex-col gap-5">
+            <div className="flex items-center gap-3">
+              <div className="h-10 w-10 flex items-center justify-center bg-bt-red/15 border border-bt-red/40 text-bt-red">
+                <Lock className="h-5 w-5" />
+              </div>
+              <div>
+                <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-bt-red">
+                  Access Restricted
+                </p>
+                <h1 className="font-display text-2xl uppercase tracking-wide text-white">
+                  Private Steam Family
+                </h1>
+              </div>
+            </div>
+
+            <p className="text-sm text-bt-muted leading-relaxed">
+              This Steam Family is private. Only the creator, active family
+              members, and waitlisted friends on the roster can view its
+              libraries and snapshots.
+            </p>
+
+            {user ? (
+              <div className="flex flex-col gap-4 pt-1">
+                <p className="font-mono text-xs text-bt-dim">
+                  Signed in as{" "}
+                  <span className="text-white">{user.personaName}</span> (
+                  {user.steamId64}), which is not on this family&apos;s roster.
+                </p>
+                <Link
+                  href="/"
+                  className="p5-btn inline-flex items-center justify-center gap-2 bg-bt-red hover:bg-bt-red-hover text-white font-display uppercase tracking-wider text-sm px-5 py-3"
+                >
+                  <ArrowLeft className="h-4 w-4" />
+                  <span>Back to Launchpad</span>
+                </Link>
+              </div>
+            ) : (
+              <div className="flex flex-col gap-3 pt-1">
+                <a
+                  href="/api/auth/steam"
+                  className="p5-btn inline-flex items-center justify-center gap-2 bg-bt-red hover:bg-bt-red-hover text-white font-display uppercase tracking-wider text-sm px-5 py-3"
+                >
+                  <LogIn className="h-4 w-4" />
+                  <span>Sign in with Steam</span>
+                </a>
+                <Link
+                  href="/"
+                  className="inline-flex items-center justify-center gap-1.5 font-mono text-xs uppercase tracking-wider text-bt-muted hover:text-white py-2 transition-colors"
+                >
+                  <ArrowLeft className="h-3.5 w-3.5" />
+                  <span>Back to Launchpad</span>
+                </Link>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   const hasApiKey = Boolean(process.env.STEAM_API_KEY);
   const hasDatabase = hasSupabaseConfig();
   return (

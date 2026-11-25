@@ -89,6 +89,8 @@ interface FriendsApiResponse {
   error?: string;
 }
 
+const MAX_WAITLIST = 6;
+
 function isPlaceholderName(name: string): boolean {
   const trimmed = name.trim();
   if (!trimmed) return true;
@@ -280,6 +282,7 @@ export function MemberEditorModal({
       isWaitlist: isWait,
     };
     if (isWait) {
+      if (draftWaitlist.length >= MAX_WAITLIST) return;
       setDraftWaitlist((prev) => [...prev, newItem]);
     } else if (draftMembers.length < 6) {
       setDraftMembers((prev) => [...prev, newItem]);
@@ -557,6 +560,13 @@ export function MemberEditorModal({
       if (hasApiKey) {
         void verifyRow(emptyWaitSlot.id, friend.steamId64, true);
       }
+      return;
+    }
+
+    if (draftWaitlist.length >= MAX_WAITLIST) {
+      setPickerNotice(
+        "All 6 waitlist slots are filled — click a selected friend to remove."
+      );
       return;
     }
 
@@ -1006,7 +1016,7 @@ export function MemberEditorModal({
                               : "text-bt-muted hover:text-white"
                           }`}
                         >
-                          Add to Waitlist
+                          Add to Waitlist ({cleanWaitlistPreview.length}/6)
                         </button>
                       </div>
 
@@ -1313,16 +1323,18 @@ export function MemberEditorModal({
                 <div className="flex items-center gap-2">
                   <span className="h-4 w-1 bg-bt-muted" />
                   <span className="font-condensed text-xs font-bold uppercase tracking-[0.2em] text-bt-muted">
-                    Waitlist Challengers ({draftWaitlist.length})
+                    Waitlist Challengers ({draftWaitlist.length}/6)
                   </span>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => addMember(true)}
-                  className="cursor-pointer inline-flex items-center gap-1 border border-bt-border bg-bt-elevated px-2.5 py-1 font-condensed text-xs font-bold uppercase tracking-wider text-white hover:border-bt-red transition-colors"
-                >
-                  <Plus className="h-3.5 w-3.5" /> Add Waitlist
-                </button>
+                {draftWaitlist.length < MAX_WAITLIST && (
+                  <button
+                    type="button"
+                    onClick={() => addMember(true)}
+                    className="cursor-pointer inline-flex items-center gap-1 border border-bt-border bg-bt-elevated px-2.5 py-1 font-condensed text-xs font-bold uppercase tracking-wider text-white hover:border-bt-red transition-colors"
+                  >
+                    <Plus className="h-3.5 w-3.5" /> Add Waitlist
+                  </button>
+                )}
               </div>
 
               {draftWaitlist.length === 0 ? (

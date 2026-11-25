@@ -164,6 +164,8 @@ export interface SavedFamilyData {
   slug: string;
   name: string;
   region: SteamRegion;
+  ownerSteamId64?: string | null;
+  userRole?: "owner" | "active" | "waitlist";
   members: FamilyMemberInput[];
   waitlist: FamilyMemberInput[];
   snapshots: MonthlySnapshotRecord[];

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
+import { getSteamUserFromRequest } from "@/lib/family-access";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
-import { getSteamFamDb, verifyEditKey } from "@/lib/supabase";
+import { getSteamFamDb } from "@/lib/supabase";
 import { FamilyAnalysis, STEAM_REGIONS } from "@/lib/types";
 
 interface RouteContext {
@@ -21,6 +22,14 @@ export async function POST(req: NextRequest, context: RouteContext) {
     );
   }
 
+  const user = getSteamUserFromRequest(req);
+  if (!user) {
+    return NextResponse.json(
+      { error: "Sign in with Steam to record snapshots." },
+      { status: 401 }
+    );
+  }
+
   const { slug } = await context.params;
   const ip = getClientIp(req.headers);
   const rl = checkRateLimit(`snapshot:${ip}:${slug}`, 20, 15 * 60 * 1000);
@@ -33,27 +42,22 @@ export async function POST(req: NextRequest, context: RouteContext) {
     );
   }
 
-  const editKey = req.headers.get("x-edit-key")?.trim() ?? "";
-  if (!editKey) {
-    return NextResponse.json(
-      { error: "Edit passcode is required." },
-      { status: 401 }
-    );
-  }
-
   const { data: family } = await db
     .from("families")
-    .select("id, edit_key_hash")
+    .select("id, owner_steam_id64")
     .eq("slug", slug)
     .maybeSingle();
 
   if (!family) {
-    return NextResponse.json({ error: "Family group not found." }, { status: 404 });
+    return NextResponse.json(
+      { error: "Family group not found." },
+      { status: 404 }
+    );
   }
 
-  if (!verifyEditKey(editKey, family.edit_key_hash)) {
+  if (family.owner_steam_id64 !== user.steamId64) {
     return NextResponse.json(
-      { error: "Invalid edit passcode." },
+      { error: "Only the family creator can record snapshots." },
       { status: 403 }
     );
   }

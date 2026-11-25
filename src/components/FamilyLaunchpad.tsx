@@ -1,8 +1,6 @@
 "use client";
 
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
-import Link from "next/link";
-import { useRouter } from "next/navigation";
 import {
   FamilyMemberInput,
   STEAM_REGIONS,
@@ -18,7 +16,6 @@ import {
   ChevronUp,
   ClipboardPaste,
   Clock,
-  FolderOpen,
   Globe,
   Grid2x2,
   Loader2,
@@ -28,6 +25,7 @@ import {
   Radio,
   RefreshCw,
   Search,
+  ShieldCheck,
   Sparkles,
   Trash2,
   UserPlus,
@@ -52,7 +50,7 @@ export interface RecentFamilyEntry {
 export interface FamilyLaunchpadProps {
   initialRegion: SteamRegion;
   hasApiKey: boolean;
-  recentFamilies: RecentFamilyEntry[];
+  recentFamilies?: RecentFamilyEntry[];
   loading: boolean;
   error: string | null;
   steamUser?: SteamSessionUser | null;
@@ -62,6 +60,8 @@ export interface FamilyLaunchpadProps {
     waitlist: FamilyMemberInput[];
   }) => void;
 }
+
+const MAX_WAITLIST = 6;
 
 interface RowVerification {
   status: "loading" | "public" | "private" | "error";
@@ -154,19 +154,6 @@ function parseBulkLines(raw: string): string[] {
   return parsed;
 }
 
-function extractFamilySlug(raw: string): string {
-  const trimmed = raw.trim().replace(/\/+$/, "");
-  if (!trimmed) return "";
-  const urlMatch = trimmed.match(/\/f\/([^/?#]+)/i);
-  if (urlMatch?.[1]) return urlMatch[1].trim();
-  return trimmed.replace(/^\/+/, "");
-}
-
-function formatUpdatedDate(iso: string): string {
-  if (!iso) return "";
-  return iso.slice(0, 10);
-}
-
 const CAPABILITIES = [
   {
     code: "01",
@@ -191,15 +178,12 @@ const CAPABILITIES = [
 export function FamilyLaunchpad({
   initialRegion,
   hasApiKey,
-  recentFamilies,
   loading,
   error,
   steamUser = null,
   onLaunch,
 }: FamilyLaunchpadProps) {
-  const router = useRouter();
   const [region, setRegion] = useState<SteamRegion>(initialRegion);
-  const [quickSlug, setQuickSlug] = useState<string>("");
 
   const [draftMembers, setDraftMembers] = useState<FamilyMemberInput[]>(() => [
     {
@@ -520,13 +504,6 @@ export function FamilyLaunchpad({
     }
   };
 
-  const handleQuickJump = (e: FormEvent) => {
-    e.preventDefault();
-    const slug = extractFamilySlug(quickSlug);
-    if (!slug) return;
-    router.push(`/f/${encodeURIComponent(slug)}`);
-  };
-
   const updateRow = (
     isWait: boolean,
     id: string,
@@ -567,6 +544,7 @@ export function FamilyLaunchpad({
     };
     if (isWait) {
       setWaitlistOpen(true);
+      if (draftWaitlist.length >= MAX_WAITLIST) return;
       setDraftWaitlist((prev) => [...prev, newItem]);
     } else if (draftMembers.length < 6) {
       setDraftMembers((prev) => [...prev, newItem]);
@@ -763,6 +741,13 @@ export function FamilyLaunchpad({
       if (hasApiKey) {
         void verifyRow(emptyWaitSlot.id, friend.steamId64, true);
       }
+      return;
+    }
+
+    if (draftWaitlist.length >= MAX_WAITLIST) {
+      setPickerNotice(
+        "All 6 waitlist slots are filled — click a selected friend to remove."
+      );
       return;
     }
 
@@ -970,72 +955,64 @@ export function FamilyLaunchpad({
             })}
           </div>
 
-          {/* Open Saved Family /f/ Quick-Jump Card */}
+          {/* Account-Based Access Card */}
           <div className="p5-frame bg-bt-border">
-            <div className="bg-bt-surface p-4 space-y-4">
+            <div className="bg-bt-surface p-4 space-y-3">
               <div className="flex items-center justify-between gap-2">
                 <div className="flex items-center gap-2 min-w-0">
-                  <FolderOpen className="h-4 w-4 text-bt-red shrink-0" />
+                  <ShieldCheck className="h-4 w-4 text-bt-red shrink-0" />
                   <span className="font-condensed text-xs font-bold uppercase tracking-[0.18em] text-white">
-                    Open Saved Family
+                    ACCOUNT-BASED ACCESS
                   </span>
                 </div>
-                <span className="whitespace-nowrap shrink-0 font-mono text-[10px] uppercase tracking-wider text-bt-dim">
-                  /f/&lt;slug&gt;
+                <span className="p5-tag bg-bt-elevated border border-bt-border px-2 py-0.5 font-mono text-[10px] uppercase tracking-wider text-bt-muted">
+                  <span className="p5-unskew inline-block">
+                    {steamUser ? "STEAM SYNC" : "PREVIEW MODE"}
+                  </span>
                 </span>
               </div>
 
-              <form onSubmit={handleQuickJump} className="flex items-stretch gap-2">
-                <div className="flex flex-1 min-w-0 items-center border border-bt-border bg-bt-bg focus-within:border-bt-red transition-colors">
-                  <span className="select-none whitespace-nowrap shrink-0 pl-3 pr-1 font-mono text-xs text-bt-dim">
-                    /f/
-                  </span>
-                  <input
-                    type="text"
-                    value={quickSlug}
-                    onChange={(e) => setQuickSlug(e.target.value)}
-                    aria-label="Saved family slug or link"
-                    placeholder="your-family-slug"
-                    className="min-w-0 w-full bg-transparent py-2 pr-2.5 font-mono text-xs text-white placeholder:text-bt-dim focus:outline-none"
-                  />
+              {steamUser ? (
+                <div className="space-y-2.5">
+                  <div className="flex items-center gap-2.5 border border-emerald-500/35 bg-emerald-950/30 px-3 py-2">
+                    {steamUser.avatarUrl ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        src={steamUser.avatarUrl}
+                        alt={steamUser.personaName}
+                        className="h-6 w-6 shrink-0 object-cover border border-emerald-500/50"
+                      />
+                    ) : (
+                      <div className="h-6 w-6 shrink-0 border border-emerald-500/50 bg-bt-bg flex items-center justify-center font-mono text-[10px] text-emerald-300">
+                        {steamUser.personaName.slice(0, 2).toUpperCase()}
+                      </div>
+                    )}
+                    <span className="truncate font-mono text-xs font-semibold text-white">
+                      Signed in as {steamUser.personaName}
+                    </span>
+                  </div>
+                  <p className="text-xs text-bt-muted leading-relaxed">
+                    Your saved families and waitlists auto-load when you sign
+                    in. You can also test any temporary lineup in{" "}
+                    <span className="font-semibold text-white">
+                      Preview Mode
+                    </span>{" "}
+                    on the right.
+                  </p>
                 </div>
-                <button
-                  type="submit"
-                  disabled={!extractFamilySlug(quickSlug)}
-                  className="p5-btn cursor-pointer inline-flex items-center gap-1.5 bg-bt-red px-4 py-2 font-condensed text-xs font-bold uppercase tracking-widest text-white hover:bg-bt-red-hover transition-colors disabled:opacity-40 disabled:cursor-not-allowed shrink-0"
-                >
-                  <span>Open</span>
-                  <ArrowRight className="h-3.5 w-3.5" />
-                </button>
-              </form>
-
-              {recentFamilies.length > 0 && (
-                <div className="border-t border-bt-border/80 pt-3 space-y-2">
-                  <div className="font-condensed text-[10px] font-bold uppercase tracking-[0.2em] text-bt-muted">
-                    Recent Saved Groups ({recentFamilies.length})
-                  </div>
-                  <div className="space-y-1.5">
-                    {recentFamilies.map((f) => (
-                      <Link
-                        key={f.slug}
-                        href={`/f/${f.slug}`}
-                        className="cursor-pointer group flex items-center justify-between gap-3 border border-bt-border bg-bt-elevated/70 px-3 py-2 transition-colors hover:border-bt-red hover:bg-bt-elevated"
-                      >
-                        <div className="min-w-0">
-                          <div className="truncate font-condensed text-sm font-bold uppercase tracking-wide text-white group-hover:text-bt-red transition-colors">
-                            {f.name}
-                          </div>
-                          <div className="truncate font-mono text-[10px] text-bt-dim">
-                            /f/{f.slug}
-                            {f.updatedAt
-                              ? ` · ${formatUpdatedDate(f.updatedAt)}`
-                              : ""}
-                          </div>
-                        </div>
-                        <ArrowRight className="h-3.5 w-3.5 shrink-0 text-bt-muted group-hover:text-bt-red group-hover:translate-x-0.5 transition-all" />
-                      </Link>
-                    ))}
-                  </div>
+              ) : (
+                <div className="space-y-3">
+                  <p className="text-xs text-bt-muted leading-relaxed">
+                    Sign in with Steam to auto-load your family &amp; waitlists,
+                    or build a Preview Sandbox lineup on the right.
+                  </p>
+                  <a
+                    href="/api/auth/steam"
+                    className="p5-btn cursor-pointer inline-flex w-full items-center justify-center gap-2 bg-bt-red px-4 py-2 font-condensed text-xs font-bold uppercase tracking-[0.16em] text-white hover:bg-bt-red-hover transition-colors"
+                  >
+                    <LogIn className="h-3.5 w-3.5" />
+                    <span>Sign in with Steam</span>
+                  </a>
                 </div>
               )}
             </div>
@@ -1384,7 +1361,7 @@ export function FamilyLaunchpad({
                               : "text-bt-muted hover:text-white"
                           }`}
                         >
-                          Add to Waitlist
+                          Add to Waitlist ({cleanWaitlistMembers.length}/6)
                         </button>
                       </div>
 
@@ -1676,7 +1653,7 @@ export function FamilyLaunchpad({
                 >
                   <span className="h-3.5 w-1 bg-bt-muted" />
                   <span className="font-condensed text-xs font-bold uppercase tracking-[0.18em] text-bt-muted hover:text-white transition-colors">
-                    Waitlist Challengers ({draftWaitlist.length}) — Optional
+                    Waitlist Challengers ({draftWaitlist.length}/6) — Optional
                   </span>
                   {waitlistOpen ? (
                     <ChevronUp className="h-3.5 w-3.5 text-bt-muted" />
@@ -1685,14 +1662,16 @@ export function FamilyLaunchpad({
                   )}
                 </button>
 
-                <button
-                  type="button"
-                  onClick={() => addMember(true)}
-                  className="cursor-pointer inline-flex items-center gap-1 border border-bt-border bg-bt-elevated px-2.5 py-1 font-condensed text-xs font-bold uppercase tracking-wider text-white hover:border-bt-red transition-colors"
-                >
-                  <Plus className="h-3.5 w-3.5" />
-                  <span>Add Waitlist</span>
-                </button>
+                {draftWaitlist.length < MAX_WAITLIST && (
+                  <button
+                    type="button"
+                    onClick={() => addMember(true)}
+                    className="cursor-pointer inline-flex items-center gap-1 border border-bt-border bg-bt-elevated px-2.5 py-1 font-condensed text-xs font-bold uppercase tracking-wider text-white hover:border-bt-red transition-colors"
+                  >
+                    <Plus className="h-3.5 w-3.5" />
+                    <span>Add Waitlist</span>
+                  </button>
+                )}
               </div>
 
               {waitlistOpen && (

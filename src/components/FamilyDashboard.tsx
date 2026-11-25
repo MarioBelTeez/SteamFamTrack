@@ -1,11 +1,10 @@
 "use client";
 
-import { type MouseEvent, useCallback, useEffect, useState } from "react";
+import { type MouseEvent, useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { ContributionBoard } from "@/components/ContributionBoard";
 import {
   FamilyLaunchpad,
-  type RecentFamilyEntry,
   type SteamSessionUser,
 } from "@/components/FamilyLaunchpad";
 import { MemberEditorModal } from "@/components/MemberEditorModal";
@@ -29,16 +28,17 @@ import {
   BarChart3,
   Bookmark,
   Calendar,
-  Check,
   ChevronRight,
+  Eye,
+  FlaskConical,
   Grid3X3,
-  Link2,
   Loader2,
   LogIn,
   LogOut,
   RefreshCw,
   RotateCcw,
-  Share2,
+  Save,
+  Trash2,
   Users,
 } from "lucide-react";
 
@@ -99,36 +99,21 @@ interface AnalyzeResponse {
   error?: string;
 }
 
-interface FamilyDashboardProps {
-  initialFamily?: SavedFamilyData;
-  initialHasApiKey?: boolean;
-  initialHasDatabase?: boolean;
+type AccountSavedFamily = SavedFamilyData & {
+  ownerSteamId64?: string | null;
+  userRole?: "owner" | "active" | "waitlist";
+};
+
+interface MeFamiliesResponse {
+  user?: SteamSessionUser | null;
+  activeFamily?: AccountSavedFamily | null;
+  waitlistedIn?: AccountSavedFamily[];
 }
 
-const RECENT_FAMILIES_STORAGE_KEY = "sft_recent_families";
-const MAX_RECENT_FAMILIES = 5;
-
-function readRecentFamilies(): RecentFamilyEntry[] {
-  if (typeof window === "undefined") return [];
-  try {
-    const raw = window.localStorage.getItem(RECENT_FAMILIES_STORAGE_KEY);
-    if (!raw) return [];
-    const parsed: unknown = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return [];
-    return parsed
-      .filter(
-        (item): item is RecentFamilyEntry =>
-          Boolean(item) &&
-          typeof item === "object" &&
-          typeof (item as RecentFamilyEntry).slug === "string" &&
-          (item as RecentFamilyEntry).slug.trim().length > 0 &&
-          typeof (item as RecentFamilyEntry).name === "string" &&
-          typeof (item as RecentFamilyEntry).updatedAt === "string"
-      )
-      .slice(0, MAX_RECENT_FAMILIES);
-  } catch {
-    return [];
-  }
+interface FamilyDashboardProps {
+  initialFamily?: AccountSavedFamily;
+  initialHasApiKey?: boolean;
+  initialHasDatabase?: boolean;
 }
 
 export function FamilyDashboard({
@@ -168,48 +153,64 @@ export function FamilyDashboard({
   const [notice, setNotice] = useState<string | null>(null);
   const [editorOpen, setEditorOpen] = useState(false);
   const [saveModalOpen, setSaveModalOpen] = useState(false);
-  const [copiedLink, setCopiedLink] = useState(false);
-  const [recentFamilies, setRecentFamilies] = useState<RecentFamilyEntry[]>([]);
+  const [activeSavedFamily, setActiveSavedFamily] =
+    useState<AccountSavedFamily | null>(initialFamily ?? null);
+  const [myActiveFamily, setMyActiveFamily] =
+    useState<AccountSavedFamily | null>(null);
+  const [waitlistedFamilies, setWaitlistedFamilies] = useState<
+    AccountSavedFamily[]
+  >([]);
+  const [isPreviewMode, setIsPreviewMode] = useState(false);
+  const [deletingFamily, setDeletingFamily] = useState(false);
   const [steamUser, setSteamUser] = useState<SteamSessionUser | null>(null);
   const [signingOut, setSigningOut] = useState(false);
 
-  const initialFamilySlug = initialFamily?.slug;
-  const initialFamilyName = initialFamily?.name;
-  const hasActiveRoster = members.length > 0;
+  const manualLaunchRef = useRef(false);
+  const isPreviewModeRef = useRef(false);
 
-  useEffect(() => {
-    let cancelled = false;
-    const existing = readRecentFamilies();
-    if (initialFamilySlug && initialFamilyName) {
-      const entry: RecentFamilyEntry = {
-        slug: initialFamilySlug,
-        name: initialFamilyName,
-        updatedAt: new Date().toISOString(),
-      };
-      const next = [
-        entry,
-        ...existing.filter((item) => item.slug !== initialFamilySlug),
-      ].slice(0, MAX_RECENT_FAMILIES);
-      try {
-        window.localStorage.setItem(
-          RECENT_FAMILIES_STORAGE_KEY,
-          JSON.stringify(next)
-        );
-      } catch {
-        // ignore storage quota/privacy mode errors
-      }
-      queueMicrotask(() => {
-        if (!cancelled) setRecentFamilies(next);
-      });
-    } else {
-      queueMicrotask(() => {
-        if (!cancelled) setRecentFamilies(existing);
-      });
-    }
-    return () => {
-      cancelled = true;
-    };
-  }, [initialFamilySlug, initialFamilyName]);
+  const hasActiveRoster = members.length > 0;
+  const isOwner = !activeSavedFamily
+    ? true
+    : Boolean(
+        steamUser &&
+          (activeSavedFamily.userRole === "owner" ||
+            activeSavedFamily.ownerSteamId64 === steamUser.steamId64)
+      );
+
+  const loadSavedFamily = useCallback((fam: AccountSavedFamily) => {
+    isPreviewModeRef.current = false;
+    setIsPreviewMode(false);
+    setActiveSavedFamily(fam);
+    setRegion(fam.region);
+    setMembers(fam.members);
+    setWaitlist(fam.waitlist);
+    setSnapshots(fam.snapshots ?? []);
+    setActiveTab("board");
+    setAnalysis(null);
+    setActiveLibraries([]);
+    setWaitlistLibraries([]);
+    setError(null);
+    setWarnings([]);
+    setNotice(null);
+    setLoading(fam.members.length > 0);
+  }, []);
+
+  const enterPreviewSandbox = useCallback(() => {
+    isPreviewModeRef.current = true;
+    setIsPreviewMode(true);
+    setActiveSavedFamily(null);
+    setMembers([]);
+    setWaitlist([]);
+    setSnapshots([]);
+    setAnalysis(null);
+    setActiveLibraries([]);
+    setWaitlistLibraries([]);
+    setWarnings([]);
+    setError(null);
+    setNotice(null);
+    setLoading(false);
+    setActiveTab("board");
+  }, []);
 
   useEffect(() => {
     fetch("/api/analyze")
@@ -237,11 +238,26 @@ export function FamilyDashboard({
       });
     }
 
-    fetch("/api/auth/me")
-      .then((r) => (r.ok ? r.json() : { user: null }))
-      .then((d: { user?: SteamSessionUser | null }) => {
-        if (!cancelled) {
-          setSteamUser(d?.user ?? null);
+    fetch("/api/me/families")
+      .then((r) =>
+        r.ok
+          ? r.json()
+          : { user: null, activeFamily: null, waitlistedIn: [] }
+      )
+      .then((d: MeFamiliesResponse) => {
+        if (cancelled) return;
+        setSteamUser(d?.user ?? null);
+        setMyActiveFamily(d?.activeFamily ?? null);
+        setWaitlistedFamilies(
+          Array.isArray(d?.waitlistedIn) ? d.waitlistedIn : []
+        );
+        if (
+          !initialFamily &&
+          !isPreviewModeRef.current &&
+          !manualLaunchRef.current &&
+          d?.activeFamily
+        ) {
+          loadSavedFamily(d.activeFamily);
         }
       })
       .catch(() => {});
@@ -249,7 +265,7 @@ export function FamilyDashboard({
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [initialFamily, loadSavedFamily]);
 
   const runAnalysis = useCallback(
     async (
@@ -338,25 +354,6 @@ export function FamilyDashboard({
     };
   }, [region, includeExcluded, members, waitlist]);
 
-  const getEditKeyForSlug = (slug: string): string | null => {
-    try {
-      const cached = sessionStorage.getItem(`sft_edit_key:${slug}`);
-      if (cached) return cached;
-    } catch {
-      // ignore
-    }
-    const entered = window.prompt(
-      "Enter this group's Edit Passcode to save changes:"
-    );
-    if (!entered?.trim()) return null;
-    try {
-      sessionStorage.setItem(`sft_edit_key:${slug}`, entered.trim());
-    } catch {
-      // ignore
-    }
-    return entered.trim();
-  };
-
   const handleLaunchFamily = ({
     region: nextRegion,
     members: nextMembers,
@@ -366,6 +363,11 @@ export function FamilyDashboard({
     members: FamilyMemberInput[];
     waitlist: FamilyMemberInput[];
   }) => {
+    manualLaunchRef.current = true;
+    isPreviewModeRef.current = true;
+    setIsPreviewMode(true);
+    setActiveSavedFamily(null);
+    setSnapshots([]);
     setRegion(nextRegion);
     setMembers(nextMembers);
     setWaitlist(nextWaitlist);
@@ -380,16 +382,7 @@ export function FamilyDashboard({
   };
 
   const handleResetToLaunchpad = () => {
-    setMembers([]);
-    setWaitlist([]);
-    setAnalysis(null);
-    setActiveLibraries([]);
-    setWaitlistLibraries([]);
-    setWarnings([]);
-    setError(null);
-    setNotice(null);
-    setLoading(false);
-    setActiveTab("board");
+    enterPreviewSandbox();
   };
 
   const handleBrandClick = (e: MouseEvent<HTMLAnchorElement>) => {
@@ -418,16 +411,13 @@ export function FamilyDashboard({
       setWarnings([]);
     }
 
-    if (!initialFamily) return;
-    const key = getEditKeyForSlug(initialFamily.slug);
-    if (!key) return;
+    if (!activeSavedFamily || !isOwner) return;
 
     try {
-      const res = await fetch(`/api/families/${initialFamily.slug}`, {
+      const res = await fetch(`/api/families/${activeSavedFamily.slug}`, {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
-          "x-edit-key": key,
         },
         body: JSON.stringify({
           region,
@@ -437,11 +427,18 @@ export function FamilyDashboard({
       });
       const data = await res.json();
       if (!res.ok) {
-        if (res.status === 401 || res.status === 403) {
-          sessionStorage.removeItem(`sft_edit_key:${initialFamily.slug}`);
-        }
         throw new Error(data.error ?? "Failed to persist member edits");
       }
+      const updatedFamily: AccountSavedFamily = {
+        ...activeSavedFamily,
+        region,
+        members: nextMembers,
+        waitlist: nextWaitlist,
+      };
+      setActiveSavedFamily(updatedFamily);
+      setMyActiveFamily((prev) =>
+        prev?.slug === updatedFamily.slug ? updatedFamily : prev
+      );
       setNotice("Saved member changes to group.");
       setTimeout(() => setNotice(null), 3000);
     } catch (err) {
@@ -452,26 +449,23 @@ export function FamilyDashboard({
   };
 
   const handleSaveSnapshot = async (monthKey: string) => {
-    if (!initialFamily || !analysis) return;
-    const key = getEditKeyForSlug(initialFamily.slug);
-    if (!key) return;
+    if (!activeSavedFamily || !analysis || !isOwner) return;
 
-    const res = await fetch(`/api/families/${initialFamily.slug}/snapshots`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-edit-key": key,
-      },
-      body: JSON.stringify({
-        snapshotMonth: monthKey,
-        analysis,
-      }),
-    });
+    const res = await fetch(
+      `/api/families/${activeSavedFamily.slug}/snapshots`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          snapshotMonth: monthKey,
+          analysis,
+        }),
+      }
+    );
     const data = await res.json();
     if (!res.ok) {
-      if (res.status === 401 || res.status === 403) {
-        sessionStorage.removeItem(`sft_edit_key:${initialFamily.slug}`);
-      }
       setError(data.error ?? "Failed to record snapshot");
       return;
     }
@@ -486,11 +480,39 @@ export function FamilyDashboard({
     setTimeout(() => setNotice(null), 3000);
   };
 
-  const handleCopyShareLink = () => {
-    if (typeof window === "undefined") return;
-    navigator.clipboard.writeText(window.location.href);
-    setCopiedLink(true);
-    setTimeout(() => setCopiedLink(false), 2000);
+  const handleDeleteFamily = async () => {
+    if (!activeSavedFamily || !isOwner || deletingFamily) return;
+    if (
+      !window.confirm(
+        `Delete "${activeSavedFamily.name}"? This cannot be undone.`
+      )
+    ) {
+      return;
+    }
+
+    setDeletingFamily(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/families/${activeSavedFamily.slug}`, {
+        method: "DELETE",
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data.error ?? "Failed to delete family");
+      }
+      const deletedSlug = activeSavedFamily.slug;
+      setMyActiveFamily((prev) => (prev?.slug === deletedSlug ? null : prev));
+      setWaitlistedFamilies((prev) =>
+        prev.filter((fam) => fam.slug !== deletedSlug)
+      );
+      enterPreviewSandbox();
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Failed to delete family"
+      );
+    } finally {
+      setDeletingFamily(false);
+    }
   };
 
   const handleSteamSignOut = async () => {
@@ -502,6 +524,8 @@ export function FamilyDashboard({
         throw new Error(`Sign-out failed (${res.status})`);
       }
       setSteamUser(null);
+      setMyActiveFamily(null);
+      setWaitlistedFamilies([]);
     } catch {
       setError("Failed to sign out of Steam session. Please try again.");
     } finally {
@@ -602,7 +626,7 @@ export function FamilyDashboard({
                   className="cursor-pointer min-w-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-bt-red"
                 >
                   <h1 className="font-display text-2xl sm:text-3xl leading-none tracking-wider uppercase text-white hover:text-white/90 transition-colors truncate">
-                    {initialFamily ? initialFamily.name : "STEAMFAMTRACK"}
+                    {activeSavedFamily ? activeSavedFamily.name : "STEAMFAMTRACK"}
                   </h1>
                 </Link>
                 <span
@@ -626,10 +650,28 @@ export function FamilyDashboard({
                     LIVE STEAM API
                   </span>
                 </span>
+                {hasActiveRoster && !activeSavedFamily && (
+                  <span className="p5-tag px-2.5 py-0.5 border bg-amber-950/60 border-amber-500/50 text-amber-300">
+                    <span className="p5-unskew inline-flex items-center gap-1.5 font-mono text-[10px] font-medium uppercase tracking-widest">
+                      <FlaskConical className="h-3 w-3" />
+                      PREVIEW SANDBOX
+                    </span>
+                  </span>
+                )}
+                {activeSavedFamily && !isOwner && (
+                  <span className="p5-tag px-2.5 py-0.5 border bg-bt-elevated border-bt-border text-bt-muted">
+                    <span className="p5-unskew inline-flex items-center gap-1.5 font-mono text-[10px] font-medium uppercase tracking-widest">
+                      <Eye className="h-3 w-3 text-bt-red" />
+                      {activeSavedFamily.userRole === "waitlist"
+                        ? "WAITLISTED"
+                        : "VIEW ONLY"}
+                    </span>
+                  </span>
+                )}
               </div>
               <p className="font-mono text-[11px] uppercase tracking-[0.16em] text-bt-muted mt-1 truncate">
-                {initialFamily
-                  ? `/f/${initialFamily.slug}`
+                {activeSavedFamily
+                  ? `/f/${activeSavedFamily.slug}`
                   : "BELTEEZ STUDIO TELEMETRY"}
               </p>
             </div>
@@ -660,44 +702,31 @@ export function FamilyDashboard({
                   ))}
                 </select>
 
-                {/* Edit Roster */}
-                <button
-                  type="button"
-                  onClick={() => setEditorOpen(true)}
-                  className="cursor-pointer inline-flex items-center gap-1.5 bg-bt-elevated border border-bt-border px-3 py-1.5 font-condensed text-xs font-bold uppercase tracking-wider text-white hover:border-bt-red transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-bt-red"
-                >
-                  <Users className="h-3.5 w-3.5 text-bt-red" />
-                  <span>Edit Roster</span>
-                  <span className="font-mono text-[11px] text-bt-muted">
-                    ({members.length}/6)
-                  </span>
-                </button>
-
-                {/* Share Link / Save & Share */}
-                {initialFamily ? (
+                {/* Edit Roster (Owner or Preview Sandbox) */}
+                {isOwner && (
                   <button
                     type="button"
-                    onClick={handleCopyShareLink}
+                    onClick={() => setEditorOpen(true)}
+                    className="cursor-pointer inline-flex items-center gap-1.5 bg-bt-elevated border border-bt-border px-3 py-1.5 font-condensed text-xs font-bold uppercase tracking-wider text-white hover:border-bt-red transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-bt-red"
+                  >
+                    <Users className="h-3.5 w-3.5 text-bt-red" />
+                    <span>Edit Roster</span>
+                    <span className="font-mono text-[11px] text-bt-muted">
+                      ({members.length}/6)
+                    </span>
+                  </button>
+                )}
+
+                {/* Save to Steam Account (Preview Sandbox Only) */}
+                {!activeSavedFamily && hasDatabase && (
+                  <button
+                    type="button"
+                    onClick={() => setSaveModalOpen(true)}
                     className="cursor-pointer inline-flex items-center gap-1.5 bg-bt-bg border border-bt-red/50 px-3 py-1.5 font-condensed text-xs font-bold uppercase tracking-wider text-white hover:bg-bt-red/15 hover:border-bt-red transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-bt-red"
                   >
-                    {copiedLink ? (
-                      <Check className="h-3.5 w-3.5 text-emerald-400" />
-                    ) : (
-                      <Link2 className="h-3.5 w-3.5 text-bt-red" />
-                    )}
-                    {copiedLink ? "Copied!" : "Share Link"}
+                    <Save className="h-3.5 w-3.5 text-bt-red" />
+                    Save to Steam Account
                   </button>
-                ) : (
-                  hasDatabase && (
-                    <button
-                      type="button"
-                      onClick={() => setSaveModalOpen(true)}
-                      className="cursor-pointer inline-flex items-center gap-1.5 bg-bt-bg border border-bt-red/50 px-3 py-1.5 font-condensed text-xs font-bold uppercase tracking-wider text-white hover:bg-bt-red/15 hover:border-bt-red transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-bt-red"
-                    >
-                      <Share2 className="h-3.5 w-3.5 text-bt-red" />
-                      Save &amp; Share
-                    </button>
-                  )
                 )}
 
                 {/* Primary Refresh CTA */}
@@ -734,7 +763,7 @@ export function FamilyDashboard({
             initialRegion={region}
             hasApiKey={hasApiKey}
             steamUser={steamUser}
-            recentFamilies={recentFamilies}
+            recentFamilies={[]}
             loading={loading}
             error={error}
             onLaunch={handleLaunchFamily}
@@ -951,28 +980,63 @@ export function FamilyDashboard({
                 </div>
               )}
 
-              {/* 4. Recently Visited Saved Groups */}
-              {recentFamilies.length > 0 && (
-                <div className="bg-bt-surface border border-bt-border p-3.5 space-y-2.5">
-                  <div className="flex items-center justify-between gap-2 pb-2 border-b border-bt-border/80">
-                    <span className="inline-flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-[0.2em] text-bt-muted">
-                      <Bookmark className="h-3 w-3 text-bt-red" />
-                      SAVED GROUPS
-                    </span>
-                    <span className="font-mono text-[10px] text-bt-dim">
-                      {recentFamilies.length}
-                    </span>
-                  </div>
+              {/* 4. Your Families & Preview Sandbox Switcher */}
+              {steamUser &&
+                (myActiveFamily || waitlistedFamilies.length > 0) && (
+                  <div className="bg-bt-surface border border-bt-border p-3.5 space-y-2.5">
+                    <div className="flex items-center justify-between gap-2 pb-2 border-b border-bt-border/80">
+                      <span className="inline-flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-[0.2em] text-bt-muted">
+                        <Bookmark className="h-3 w-3 text-bt-red" />
+                        YOUR FAMILIES
+                      </span>
+                      <span className="font-mono text-[10px] text-bt-dim">
+                        {(myActiveFamily ? 1 : 0) + waitlistedFamilies.length}
+                      </span>
+                    </div>
 
-                  <ul className="space-y-1.5">
-                    {recentFamilies.map((fam) => {
-                      const isCurrent = initialFamily?.slug === fam.slug;
-                      return (
-                        <li key={fam.slug}>
-                          <Link
-                            href={`/f/${fam.slug}`}
+                    <div className="space-y-1.5">
+                      {myActiveFamily && (
+                        <button
+                          type="button"
+                          onClick={() => loadSavedFamily(myActiveFamily)}
+                          aria-current={
+                            !isPreviewMode &&
+                            activeSavedFamily?.slug === myActiveFamily.slug
+                              ? "page"
+                              : undefined
+                          }
+                          className={`cursor-pointer w-full text-left group flex items-center justify-between gap-2 px-2.5 py-2 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-bt-red ${
+                            !isPreviewMode &&
+                            activeSavedFamily?.slug === myActiveFamily.slug
+                              ? "bg-bt-elevated border-l-[3px] border-l-bt-red border-y border-r border-y-bt-border border-r-bt-border text-white"
+                              : "bg-bt-bg/70 hover:bg-bt-elevated border border-bt-border/80 hover:border-bt-red/60 text-bt-muted hover:text-white"
+                          }`}
+                        >
+                          <span className="min-w-0">
+                            <span className="block font-condensed text-xs font-bold uppercase tracking-wider text-white truncate">
+                              {myActiveFamily.name}
+                            </span>
+                            <span className="block font-mono text-[10px] text-bt-dim truncate">
+                              /f/{myActiveFamily.slug}
+                            </span>
+                          </span>
+                          <span className="shrink-0 bg-bt-red/15 border border-bt-red/50 px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-widest text-bt-red font-medium">
+                            ACTIVE
+                          </span>
+                        </button>
+                      )}
+
+                      {waitlistedFamilies.map((fam) => {
+                        const isCurrent =
+                          !isPreviewMode &&
+                          activeSavedFamily?.slug === fam.slug;
+                        return (
+                          <button
+                            key={fam.slug}
+                            type="button"
+                            onClick={() => loadSavedFamily(fam)}
                             aria-current={isCurrent ? "page" : undefined}
-                            className={`cursor-pointer group flex items-center justify-between gap-2 px-2.5 py-2 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-bt-red ${
+                            className={`cursor-pointer w-full text-left group flex items-center justify-between gap-2 px-2.5 py-2 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-bt-red ${
                               isCurrent
                                 ? "bg-bt-elevated border-l-[3px] border-l-bt-red border-y border-r border-y-bt-border border-r-bt-border text-white"
                                 : "bg-bt-bg/70 hover:bg-bt-elevated border border-bt-border/80 hover:border-bt-red/60 text-bt-muted hover:text-white"
@@ -986,23 +1050,52 @@ export function FamilyDashboard({
                                 /f/{fam.slug}
                               </span>
                             </span>
-                            {isCurrent ? (
-                              <span className="shrink-0 font-mono text-[9px] uppercase tracking-widest text-bt-red font-medium">
-                                ACTIVE
-                              </span>
-                            ) : (
-                              <ArrowUpRight className="h-3.5 w-3.5 shrink-0 text-bt-dim group-hover:text-bt-red transition-colors" />
-                            )}
-                          </Link>
-                        </li>
-                      );
-                    })}
-                  </ul>
-                </div>
+                            <span className="shrink-0 bg-bt-bg border border-bt-border px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-widest text-bt-muted font-medium">
+                              WAITLIST
+                            </span>
+                          </button>
+                        );
+                      })}
+
+                      <button
+                        type="button"
+                        onClick={enterPreviewSandbox}
+                        className={`cursor-pointer w-full text-left group flex items-center justify-between gap-2 px-2.5 py-2 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-bt-red ${
+                          !activeSavedFamily
+                            ? "bg-bt-elevated border-l-[3px] border-l-amber-400 border-y border-r border-y-bt-border border-r-bt-border text-white"
+                            : "bg-bt-bg/70 hover:bg-bt-elevated border border-bt-border/80 hover:border-amber-400/60 text-bt-muted hover:text-white"
+                        }`}
+                      >
+                        <span className="flex items-center gap-2 min-w-0">
+                          <FlaskConical className="h-3.5 w-3.5 shrink-0 text-amber-400" />
+                          <span className="font-condensed text-xs font-bold uppercase tracking-wider truncate">
+                            Preview Sandbox
+                          </span>
+                        </span>
+                        <ArrowUpRight className="h-3.5 w-3.5 shrink-0 text-bt-dim group-hover:text-amber-400 transition-colors" />
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+              {/* 5. Owner Delete Family / Preview Reset */}
+              {activeSavedFamily && isOwner && (
+                <button
+                  type="button"
+                  onClick={handleDeleteFamily}
+                  disabled={deletingFamily}
+                  className="cursor-pointer w-full inline-flex items-center justify-center gap-2 bg-bt-surface border border-bt-border hover:border-bt-red/70 hover:bg-bt-red/10 px-3.5 py-2 font-condensed text-xs font-bold uppercase tracking-wider text-bt-muted hover:text-bt-red transition-colors disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-bt-red"
+                >
+                  {deletingFamily ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin text-bt-red" />
+                  ) : (
+                    <Trash2 className="h-3.5 w-3.5 text-bt-red" />
+                  )}
+                  <span>Delete Family</span>
+                </button>
               )}
 
-              {/* 5. Start New Family Reset (Unsaved Session Only) */}
-              {!initialFamily && (
+              {!activeSavedFamily && (
                 <button
                   type="button"
                   onClick={handleResetToLaunchpad}
@@ -1059,14 +1152,16 @@ export function FamilyDashboard({
                   className="border border-bt-red/40 border-l-4 border-l-bt-red bg-bt-red/10 px-4 py-3 text-sm text-white flex flex-wrap items-center justify-between gap-4"
                 >
                   <span className="font-mono text-xs sm:text-sm">{error}</span>
-                  <button
-                    type="button"
-                    onClick={() => setEditorOpen(true)}
-                    className="cursor-pointer shrink-0 inline-flex items-center gap-1.5 bg-bt-elevated border border-bt-red/60 hover:bg-bt-red px-3 py-1.5 font-condensed text-xs font-bold uppercase tracking-wider text-white transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-bt-red"
-                  >
-                    <Users className="h-3.5 w-3.5" />
-                    Edit Roster
-                  </button>
+                  {isOwner && (
+                    <button
+                      type="button"
+                      onClick={() => setEditorOpen(true)}
+                      className="cursor-pointer shrink-0 inline-flex items-center gap-1.5 bg-bt-elevated border border-bt-red/60 hover:bg-bt-red px-3 py-1.5 font-condensed text-xs font-bold uppercase tracking-wider text-white transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-bt-red"
+                    >
+                      <Users className="h-3.5 w-3.5" />
+                      Edit Roster
+                    </button>
+                  )}
                 </div>
               )}
 
@@ -1092,14 +1187,16 @@ export function FamilyDashboard({
                       </div>
                     </div>
 
-                    <button
-                      type="button"
-                      onClick={() => setEditorOpen(true)}
-                      className="cursor-pointer shrink-0 inline-flex items-center gap-1.5 bg-bt-elevated border border-amber-400/50 hover:border-amber-300 px-3 py-1.5 font-condensed text-xs font-bold uppercase tracking-wider text-amber-100 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-400"
-                    >
-                      <Users className="h-3.5 w-3.5 text-amber-400" />
-                      Edit Roster
-                    </button>
+                    {isOwner && (
+                      <button
+                        type="button"
+                        onClick={() => setEditorOpen(true)}
+                        className="cursor-pointer shrink-0 inline-flex items-center gap-1.5 bg-bt-elevated border border-amber-400/50 hover:border-amber-300 px-3 py-1.5 font-condensed text-xs font-bold uppercase tracking-wider text-amber-100 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-400"
+                      >
+                        <Users className="h-3.5 w-3.5 text-amber-400" />
+                        Edit Roster
+                      </button>
+                    )}
                   </div>
 
                   <ul className="space-y-1.5 border-t border-amber-500/20 pt-2.5">
@@ -1153,14 +1250,20 @@ export function FamilyDashboard({
                     )}
                     {activeTab === "history" && (
                       <MonthlyHistory
-                        slug={initialFamily?.slug}
+                        slug={activeSavedFamily?.slug}
                         analysis={analysis}
                         snapshots={snapshots}
                         hasDatabase={hasDatabase}
                         onSaveSnapshot={
-                          initialFamily ? handleSaveSnapshot : undefined
+                          activeSavedFamily && isOwner
+                            ? handleSaveSnapshot
+                            : undefined
                         }
-                        onOpenSaveModal={() => setSaveModalOpen(true)}
+                        onOpenSaveModal={
+                          !activeSavedFamily
+                            ? () => setSaveModalOpen(true)
+                            : undefined
+                        }
                       />
                     )}
                   </>
@@ -1195,6 +1298,17 @@ export function FamilyDashboard({
         members={members}
         waitlist={waitlist}
         analysis={analysis}
+        steamUser={steamUser}
+        onSaved={(fam: AccountSavedFamily) => {
+          isPreviewModeRef.current = false;
+          setIsPreviewMode(false);
+          setActiveSavedFamily(fam);
+          setMyActiveFamily(fam);
+          setSnapshots(fam.snapshots ?? []);
+          setSaveModalOpen(false);
+          setNotice(`Saved "${fam.name}" to your Steam account.`);
+          setTimeout(() => setNotice(null), 3000);
+        }}
       />
     </div>
   );

@@ -1,16 +1,14 @@
 "use client";
 
 import { useState } from "react";
-import { FamilyAnalysis, FamilyMemberInput, SteamRegion } from "@/lib/types";
+import { SteamSessionUser } from "@/components/MemberEditorModal";
 import {
-  Check,
-  Copy,
-  ExternalLink,
-  KeyRound,
-  Loader2,
-  Share2,
-  X,
-} from "lucide-react";
+  FamilyAnalysis,
+  FamilyMemberInput,
+  SavedFamilyData,
+  SteamRegion,
+} from "@/lib/types";
+import { CheckCircle2, Loader2, LogIn, Save, ShieldCheck, X } from "lucide-react";
 
 interface SaveFamilyModalProps {
   isOpen: boolean;
@@ -19,12 +17,8 @@ interface SaveFamilyModalProps {
   members: FamilyMemberInput[];
   waitlist: FamilyMemberInput[];
   analysis: FamilyAnalysis | null;
-}
-
-interface CreatedResult {
-  slug: string;
-  name: string;
-  editKey: string;
+  steamUser?: SteamSessionUser | null;
+  onSaved?: (family: SavedFamilyData) => void;
 }
 
 export function SaveFamilyModal({
@@ -34,29 +28,26 @@ export function SaveFamilyModal({
   members,
   waitlist,
   analysis,
+  steamUser = null,
+  onSaved,
 }: SaveFamilyModalProps) {
   const [name, setName] = useState("My Steam Family");
-  const [editKey, setEditKey] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [created, setCreated] = useState<CreatedResult | null>(null);
-  const [copiedField, setCopiedField] = useState<"url" | "key" | null>(null);
+  const [savedFamily, setSavedFamily] = useState<SavedFamilyData | null>(null);
 
   if (!isOpen) return null;
 
-  const shareUrl =
-    created && typeof window !== "undefined"
-      ? `${window.location.origin}/f/${created.slug}`
-      : "";
-
-  const copyText = (text: string, field: "url" | "key") => {
-    navigator.clipboard.writeText(text);
-    setCopiedField(field);
-    setTimeout(() => setCopiedField(null), 2000);
+  const handleClose = () => {
+    setError(null);
+    setSavedFamily(null);
+    onClose();
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!steamUser) return;
+
     setSaving(true);
     setError(null);
     try {
@@ -64,9 +55,8 @@ export function SaveFamilyModal({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          name,
+          name: name.trim() || "My Steam Family",
           region,
-          editKey: editKey.trim() || undefined,
           members,
           waitlist,
           initialAnalysis: analysis ?? undefined,
@@ -76,16 +66,10 @@ export function SaveFamilyModal({
       if (!res.ok || data.error) {
         throw new Error(data.error ?? "Failed to save family group");
       }
-      try {
-        sessionStorage.setItem(`sft_edit_key:${data.slug}`, data.editKey);
-      } catch {
-        // ignore storage errors
-      }
-      setCreated({
-        slug: data.slug,
-        name: data.name,
-        editKey: data.editKey,
-      });
+
+      const createdFamily = (data.family ?? data) as SavedFamilyData;
+      setSavedFamily(createdFamily);
+      onSaved?.(createdFamily);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to save family");
     } finally {
@@ -107,17 +91,21 @@ export function SaveFamilyModal({
           {/* Modal Header */}
           <div className="flex items-center justify-between gap-3 border-b border-bt-border px-6 py-4">
             <div className="flex items-center gap-2.5">
-              <Share2 className="h-4 w-4 text-bt-red shrink-0" />
+              <Save className="h-4 w-4 text-bt-red shrink-0" />
               <h2
                 id="save-family-title"
                 className="font-display text-2xl tracking-wider uppercase text-white leading-none"
               >
-                {created ? "Family Group Saved" : "Save & Share Steam Family"}
+                {savedFamily
+                  ? "Family Saved"
+                  : steamUser
+                    ? "Save Steam Family"
+                    : "Sign in to Save"}
               </h2>
             </div>
             <button
               type="button"
-              onClick={onClose}
+              onClick={handleClose}
               aria-label="Close modal"
               className="cursor-pointer border border-bt-border bg-bt-elevated p-1.5 text-bt-muted hover:border-bt-red hover:text-white transition-colors"
             >
@@ -125,104 +113,68 @@ export function SaveFamilyModal({
             </button>
           </div>
 
-          {created ? (
+          {!steamUser ? (
             <div className="p-6 space-y-5">
-              <div className="border-y border-r border-emerald-500/30 border-l-4 border-l-emerald-400 bg-emerald-500/10 px-3.5 py-3 text-xs text-bt-muted">
-                Anyone with the link below can view your board and run swap
-                simulations. Store your{" "}
-                <strong className="text-white">Edit Passcode</strong> safely —
-                it is required to edit members or record monthly snapshots.
-              </div>
-
-              <div>
-                <label
-                  htmlFor="saved-share-url"
-                  className="mb-1.5 block font-condensed text-xs font-bold uppercase tracking-wider text-bt-muted"
-                >
-                  Shareable Link
-                </label>
-                <div className="flex items-center gap-2">
-                  <input
-                    id="saved-share-url"
-                    readOnly
-                    value={shareUrl}
-                    className="flex-1 border border-bt-border bg-bt-bg px-3 py-2 font-mono text-sm text-white focus:border-bt-red focus:outline-none"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => copyText(shareUrl, "url")}
-                    aria-label="Copy shareable link"
-                    className="cursor-pointer border border-bt-border bg-bt-elevated px-3 py-2.5 text-white hover:border-bt-red transition-colors"
-                  >
-                    {copiedField === "url" ? (
-                      <Check className="h-4 w-4 text-emerald-400" />
-                    ) : (
-                      <Copy className="h-4 w-4" />
-                    )}
-                  </button>
-                </div>
-              </div>
-
-              <div>
-                <label
-                  htmlFor="saved-edit-key"
-                  className="mb-1.5 block font-condensed text-xs font-bold uppercase tracking-wider text-amber-300"
-                >
-                  Edit Passcode (Shown Once)
-                </label>
-                <div className="flex items-center gap-2">
-                  <input
-                    id="saved-edit-key"
-                    readOnly
-                    value={created.editKey}
-                    className="flex-1 border border-amber-500/45 bg-amber-500/10 px-3 py-2 font-mono text-sm font-bold text-amber-200 focus:border-amber-400 focus:outline-none"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => copyText(created.editKey, "key")}
-                    aria-label="Copy edit passcode"
-                    className="cursor-pointer border border-bt-border bg-bt-elevated px-3 py-2.5 text-white hover:border-bt-red transition-colors"
-                  >
-                    {copiedField === "key" ? (
-                      <Check className="h-4 w-4 text-emerald-400" />
-                    ) : (
-                      <Copy className="h-4 w-4" />
-                    )}
-                  </button>
-                </div>
+              <div className="border-y border-r border-bt-red/35 border-l-4 border-l-bt-red bg-bt-red/10 px-4 py-3.5 text-xs text-bt-muted leading-relaxed">
+                Sign in with your Steam account to save this family privately.
+                Anyone in your 6 active slots or 6 waitlist slots will
+                automatically see it when they sign in with Steam.
               </div>
 
               <div className="flex items-center justify-end gap-3 border-t border-bt-border pt-4">
                 <button
                   type="button"
-                  onClick={onClose}
+                  onClick={handleClose}
                   className="cursor-pointer border border-bt-border px-4 py-2 font-condensed text-xs font-bold uppercase tracking-widest text-bt-muted hover:border-white/40 hover:text-white transition-colors"
                 >
-                  Close
+                  Cancel
                 </button>
                 <a
-                  href={`/f/${created.slug}`}
+                  href="/api/auth/steam"
+                  className="p5-btn cursor-pointer inline-flex items-center gap-2 bg-bt-red px-5 py-2 font-condensed text-xs font-bold uppercase tracking-widest text-white hover:bg-bt-red-hover transition-colors"
+                >
+                  <LogIn className="h-3.5 w-3.5" />
+                  <span>Sign in with Steam to Save</span>
+                </a>
+              </div>
+            </div>
+          ) : savedFamily ? (
+            <div className="p-6 space-y-5">
+              <div className="flex items-start gap-3 border-y border-r border-emerald-500/35 border-l-4 border-l-emerald-400 bg-emerald-500/10 px-4 py-3.5">
+                <CheckCircle2 className="h-5 w-5 text-emerald-400 shrink-0 mt-0.5" />
+                <div className="space-y-1">
+                  <div className="font-condensed text-sm font-bold uppercase tracking-wider text-white">
+                    Saved to your Steam account!
+                  </div>
+                  <p className="text-xs text-bt-muted leading-relaxed">
+                    <span className="font-semibold text-white">
+                      {savedFamily.name}
+                    </span>{" "}
+                    is now linked to{" "}
+                    <span className="text-white">{steamUser.personaName}</span>{" "}
+                    and all listed active &amp; waitlist Steam members.
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-end border-t border-bt-border pt-4">
+                <button
+                  type="button"
+                  onClick={handleClose}
                   className="p5-btn cursor-pointer inline-flex items-center gap-1.5 bg-bt-red px-5 py-2 font-condensed text-xs font-bold uppercase tracking-widest text-white hover:bg-bt-red-hover transition-colors"
                 >
-                  Open Group Page
-                  <ExternalLink className="h-3.5 w-3.5" />
-                </a>
+                  Done
+                </button>
               </div>
             </div>
           ) : (
             <form onSubmit={handleSubmit} className="p-6 space-y-4">
-              <p className="text-xs text-bt-muted">
-                Creates a permanent shareable URL (
-                <span className="font-mono text-white">/f/your-group</span>)
-                backed by Supabase with monthly snapshot tracking.
-              </p>
-
               <div>
                 <label
                   htmlFor="family-group-name"
                   className="mb-1.5 block font-condensed text-xs font-bold uppercase tracking-wider text-bt-muted"
                 >
-                  Family Group Name
+                  Family Name
                 </label>
                 <input
                   id="family-group-name"
@@ -231,29 +183,18 @@ export function SaveFamilyModal({
                   maxLength={60}
                   value={name}
                   onChange={(e) => setName(e.target.value)}
-                  placeholder="e.g. Squad Steam Family"
+                  placeholder="My Steam Family"
                   className="w-full border border-bt-border bg-bt-bg px-3 py-2.5 font-mono text-sm text-white placeholder:text-bt-dim focus:border-bt-red focus:outline-none"
                 />
               </div>
 
-              <div>
-                <label
-                  htmlFor="family-edit-key"
-                  className="mb-1.5 flex items-center gap-1.5 font-condensed text-xs font-bold uppercase tracking-wider text-bt-muted"
-                >
-                  <KeyRound className="h-3.5 w-3.5 text-bt-red" />
-                  Edit Passcode (optional — auto-generated if blank)
-                </label>
-                <input
-                  id="family-edit-key"
-                  type="text"
-                  minLength={4}
-                  maxLength={32}
-                  value={editKey}
-                  onChange={(e) => setEditKey(e.target.value)}
-                  placeholder="Leave blank to auto-generate"
-                  className="w-full border border-bt-border bg-bt-bg px-3 py-2.5 font-mono text-sm text-white placeholder:text-bt-dim focus:border-bt-red focus:outline-none"
-                />
+              <div className="flex items-start gap-2.5 border border-bt-border border-l-2 border-l-bt-red bg-bt-elevated/80 px-3.5 py-3 text-xs text-bt-muted leading-relaxed">
+                <ShieldCheck className="h-4 w-4 text-bt-red shrink-0 mt-0.5" />
+                <span>
+                  Saved privately to your Steam account ({steamUser.personaName}
+                  ). Anyone in your 6 active slots or 6 waitlist slots
+                  automatically sees this family when they sign in with Steam.
+                </span>
               </div>
 
               {error && (
@@ -265,7 +206,7 @@ export function SaveFamilyModal({
               <div className="flex items-center justify-end gap-3 border-t border-bt-border pt-4">
                 <button
                   type="button"
-                  onClick={onClose}
+                  onClick={handleClose}
                   className="cursor-pointer border border-bt-border px-4 py-2 font-condensed text-xs font-bold uppercase tracking-widest text-bt-muted hover:border-white/40 hover:text-white transition-colors"
                 >
                   Cancel
@@ -276,7 +217,7 @@ export function SaveFamilyModal({
                   className="p5-btn cursor-pointer inline-flex items-center gap-1.5 bg-bt-red px-5 py-2 font-condensed text-xs font-bold uppercase tracking-widest text-white hover:bg-bt-red-hover transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   {saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-                  Save &amp; Create Link
+                  Save Family
                 </button>
               </div>
             </form>

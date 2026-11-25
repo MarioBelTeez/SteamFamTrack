@@ -92,6 +92,11 @@ export function SwapSimulator({
     includeExcluded,
   ]);
 
+  const displayedWaitlist = useMemo(
+    () => waitlistLibraries.slice(0, 6),
+    [waitlistLibraries]
+  );
+
   const selectedOutLib = useMemo(
     () =>
       activeLibraries.find(
@@ -102,13 +107,13 @@ export function SwapSimulator({
 
   const selectedInLib = useMemo(
     () =>
-      waitlistLibraries.find(
+      displayedWaitlist.find(
         (l) => l.member.id === (simulation?.addedMemberId ?? addId)
-      ) ?? waitlistLibraries[0],
-    [waitlistLibraries, simulation?.addedMemberId, addId]
+      ) ?? displayedWaitlist[0],
+    [displayedWaitlist, simulation?.addedMemberId, addId]
   );
 
-  if (waitlistLibraries.length === 0) {
+  if (displayedWaitlist.length === 0) {
     return (
       <div className="p5-frame bg-bt-border">
         <div className="bg-bt-surface p-10 text-center">
@@ -230,7 +235,7 @@ export function SwapSimulator({
                     </span>
                   </span>
                   <span className="font-mono text-[11px] uppercase tabular-nums text-bt-muted">
-                    {waitlistLibraries.length} QUEUED
+                    {displayedWaitlist.length} / 6 QUEUED
                   </span>
                 </div>
 
@@ -246,7 +251,7 @@ export function SwapSimulator({
                   onChange={(e) => setAddId(e.target.value)}
                   className="w-full cursor-pointer border border-bt-border bg-bt-bg px-3 py-2.5 font-mono text-sm text-white focus:border-bt-red focus:outline-none"
                 >
-                  {waitlistLibraries.map((lib) => (
+                  {displayedWaitlist.map((lib) => (
                     <option key={lib.member.id} value={lib.member.id}>
                       {lib.member.name} ({lib.games.length} games)
                     </option>
@@ -521,13 +526,13 @@ export function SwapSimulator({
         </>
       )}
 
-      {/* Waitlist Roster Cards */}
+      {/* Waitlist Roster Cards (6-Slot Side-by-Side Grid) */}
       <div className="space-y-3">
         <div className="flex items-center justify-between gap-2">
           <div className="flex items-center gap-2.5">
             <span className="tier-rail h-5 w-1 bg-bt-red" />
             <h3 className="font-display text-xl tracking-wider uppercase text-white leading-none">
-              Waitlist Roster ({waitlistLibraries.length})
+              WAITLIST ROSTER ({displayedWaitlist.length} / 6)
             </h3>
           </div>
           <span className="inline-flex items-center gap-1.5 font-mono text-xs text-bt-muted">
@@ -536,14 +541,36 @@ export function SwapSimulator({
           </span>
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-          {waitlistLibraries.map((lib) => {
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+          {Array.from({ length: 6 }, (_, idx) => {
+            const slotNumber = String(idx + 1).padStart(2, "0");
+            const lib = displayedWaitlist[idx];
+
+            if (!lib) {
+              return (
+                <div
+                  key={`empty-waitlist-${slotNumber}`}
+                  className="border border-dashed border-bt-border/80 bg-bt-bg/60 p-3.5 flex flex-col justify-between min-h-[112px]"
+                >
+                  <span className="font-mono text-[10px] font-semibold uppercase tracking-widest text-bt-dim tabular-nums">
+                    SLOT {slotNumber}
+                  </span>
+                  <span className="font-condensed text-xs font-bold uppercase tracking-wider text-bt-muted">
+                    OPEN WAITLIST
+                  </span>
+                </div>
+              );
+            }
+
             const isSelected =
               (simulation?.addedMemberId ?? addId) === lib.member.id;
             const stats = libraryStats.get(lib.member.id) ?? {
               gamesCount: lib.games.length,
               rawValue: 0,
             };
+            const initials = (lib.member.name || lib.personaName || "??")
+              .slice(0, 2)
+              .toUpperCase();
 
             return (
               <button
@@ -556,40 +583,48 @@ export function SwapSimulator({
                     : "bg-bt-border hover:bg-bt-red/60"
                 }`}
               >
-                <div className="bg-bt-surface p-4 h-full flex flex-col justify-between gap-3">
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="min-w-0">
-                      <div className="truncate font-condensed text-base font-bold uppercase tracking-wide text-white">
-                        {lib.member.name}
-                      </div>
-                      <div className="truncate font-mono text-[11px] text-bt-muted">
-                        {lib.personaName || lib.steamId64}
-                      </div>
-                    </div>
+                <div className="bg-bt-surface p-3.5 h-full min-h-[112px] flex flex-col justify-between gap-2.5">
+                  <div className="flex items-center justify-between gap-1.5">
+                    <span className="font-mono text-[10px] font-semibold uppercase tracking-widest text-bt-muted tabular-nums">
+                      {slotNumber}
+                    </span>
                     {isSelected && (
-                      <span className="p5-tag shrink-0 bg-bt-red px-2 py-0.5 font-condensed text-[10px] font-bold uppercase tracking-widest text-white">
+                      <span className="p5-tag shrink-0 bg-bt-red px-1.5 py-0.5 font-condensed text-[9px] font-bold uppercase tracking-widest text-white">
                         <span className="p5-unskew inline-block">STAGED</span>
                       </span>
                     )}
                   </div>
 
-                  <div className="grid grid-cols-2 gap-2 border-t border-bt-border pt-2.5">
-                    <div>
-                      <div className="font-condensed text-[10px] font-bold uppercase tracking-widest text-bt-muted">
-                        Games
+                  <div className="flex items-center gap-2 min-w-0">
+                    {lib.avatarUrl ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        src={lib.avatarUrl}
+                        alt={lib.member.name}
+                        className="h-7 w-7 shrink-0 object-cover border border-bt-border"
+                      />
+                    ) : (
+                      <div className="h-7 w-7 shrink-0 border border-bt-border bg-bt-elevated flex items-center justify-center font-mono text-[10px] font-semibold text-bt-muted">
+                        {initials}
                       </div>
-                      <div className="font-mono text-sm font-semibold tabular-nums text-white">
-                        {stats.gamesCount}
+                    )}
+                    <div className="min-w-0">
+                      <div className="truncate font-condensed text-sm font-bold uppercase tracking-wide text-white leading-tight">
+                        {lib.member.name}
+                      </div>
+                      <div className="truncate font-mono text-[10px] text-bt-muted">
+                        {stats.gamesCount} games
                       </div>
                     </div>
-                    <div className="text-right">
-                      <div className="font-condensed text-[10px] font-bold uppercase tracking-widest text-bt-muted">
-                        Raw Value
-                      </div>
-                      <div className="font-mono text-sm font-semibold tabular-nums text-emerald-400">
-                        {formatAbsMoney(stats.rawValue)}
-                      </div>
-                    </div>
+                  </div>
+
+                  <div className="flex items-center justify-between border-t border-bt-border pt-2">
+                    <span className="font-condensed text-[10px] font-bold uppercase tracking-widest text-bt-muted">
+                      Raw
+                    </span>
+                    <span className="font-mono text-xs font-semibold tabular-nums text-emerald-400">
+                      {formatAbsMoney(stats.rawValue)}
+                    </span>
                   </div>
                 </div>
               </button>

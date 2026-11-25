@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
-import { checkRateLimit } from "@/lib/rate-limit";
 import {
-  generateEditPasscode,
-  generateSlug,
-  getSteamFamDb,
-  hashEditKey,
-} from "@/lib/supabase";
+  getSteamUserFromRequest,
+  loadFamilyRecord,
+  resolveMembersWithSteamIds,
+} from "@/lib/family-access";
+import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
+import { generateSlug, getSteamFamDb } from "@/lib/supabase";
 import {
   FamilyAnalysis,
   FamilyMemberInput,
@@ -16,11 +16,13 @@ import {
 interface CreateFamilyBody {
   name?: string;
   region?: SteamRegion;
-  editKey?: string;
   members?: FamilyMemberInput[];
   waitlist?: FamilyMemberInput[];
   initialAnalysis?: FamilyAnalysis;
 }
+
+const ACTIVE_MEMBER_CONFLICT_MSG =
+  "One of these active Steam accounts is already in another Steam Family. Move them to Waitlist or leave the other family first.";
 
 export async function POST(req: NextRequest) {
   const db = getSteamFamDb();
@@ -31,14 +33,22 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const ip =
-    req.headers.get("cf-connecting-ip") ??
-    req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ??
-    "local";
+  const user = getSteamUserFromRequest(req);
+  if (!user) {
+    return NextResponse.json(
+      { error: "Sign in with Steam to save your family." },
+      { status: 401 }
+    );
+  }
+
+  const ip = getClientIp(req.headers);
   const rl = checkRateLimit(`create-family:${ip}`, 10, 60 * 60 * 1000);
   if (!rl.allowed) {
     return NextResponse.json(
-      { error: "Too many families created recently. Please wait before creating another." },
+      {
+        error:
+          "Too many families created recently. Please wait before creating another.",
+      },
       { status: 429 }
     );
   }
@@ -56,7 +66,7 @@ export async function POST(req: NextRequest) {
     const region: SteamRegion =
       body.region && body.region in STEAM_REGIONS ? body.region : "ma";
     const activeMembers = (body.members ?? []).slice(0, 6);
-    const waitlistMembers = (body.waitlist ?? []).slice(0, 10);
+    const waitlistMembers = (body.waitlist ?? []).slice(0, 6);
 
     if (activeMembers.length === 0) {
       return NextResponse.json(
@@ -65,11 +75,12 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const plainEditKey =
-      body.editKey && body.editKey.trim().length >= 4
-        ? body.editKey.trim()
-        : generateEditPasscode();
-    const editKeyHash = hashEditKey(plainEditKey);
+    const apiKey = process.env.STEAM_API_KEY;
+    const [resolvedActive, resolvedWaitlist] = await Promise.all([
+      resolveMembersWithSteamIds(activeMembers, apiKey),
+      resolveMembersWithSteamIds(waitlistMembers, apiKey),
+    ]);
+
     const slug = generateSlug(name);
 
     const { data: family, error: famErr } = await db
@@ -78,9 +89,10 @@ export async function POST(req: NextRequest) {
         slug,
         name,
         region,
-        edit_key_hash: editKeyHash,
+        owner_steam_id64: user.steamId64,
+        edit_key_hash: null,
       })
-      .select("id, slug, name, region, created_at")
+      .select("id")
       .single();
 
     if (famErr || !family) {
@@ -88,18 +100,20 @@ export async function POST(req: NextRequest) {
     }
 
     const memberRows = [
-      ...activeMembers.map((m, idx) => ({
+      ...resolvedActive.map((m, idx) => ({
         family_id: family.id,
         display_name: m.name.trim() || `Member ${idx + 1}`,
         steam_input: m.steamUrlOrId.trim() || m.name.trim(),
+        steam_id64: m.steamId64,
         join_date: m.joinDate || null,
         is_waitlist: false,
         position: idx,
       })),
-      ...waitlistMembers.map((w, idx) => ({
+      ...resolvedWaitlist.map((w, idx) => ({
         family_id: family.id,
         display_name: w.name.trim() || `Waitlist ${idx + 1}`,
         steam_input: w.steamUrlOrId.trim() || w.name.trim(),
+        steam_id64: w.steamId64,
         join_date: null,
         is_waitlist: true,
         position: idx,
@@ -108,10 +122,19 @@ export async function POST(req: NextRequest) {
 
     const { error: memErr } = await db.from("family_members").insert(memberRows);
     if (memErr) {
+      await db.from("families").delete().eq("id", family.id);
+      if (
+        memErr.code === "23505" ||
+        memErr.message?.includes("uq_active_member_steam_id64")
+      ) {
+        return NextResponse.json(
+          { error: ACTIVE_MEMBER_CONFLICT_MSG },
+          { status: 409 }
+        );
+      }
       throw new Error(memErr.message);
     }
 
-    // Optionally record an initial snapshot for the current month
     if (body.initialAnalysis) {
       const monthKey = new Date().toISOString().slice(0, 7);
       await db.from("monthly_snapshots").upsert(
@@ -136,15 +159,12 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    return NextResponse.json(
-      {
-        slug: family.slug,
-        name: family.name,
-        region: family.region,
-        editKey: plainEditKey,
-      },
-      { status: 201 }
-    );
+    const saved = await loadFamilyRecord(db, { id: family.id }, user.steamId64);
+    if (!saved) {
+      throw new Error("Created family could not be loaded.");
+    }
+
+    return NextResponse.json(saved, { status: 201 });
   } catch (err) {
     const message =
       err instanceof Error ? err.message : "Failed to save family";
