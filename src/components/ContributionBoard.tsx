@@ -706,10 +706,12 @@ export function ContributionBoard({ analysis }: ContributionBoardProps) {
                             {isFreeloaderSkull && (
                               <span
                                 title={`${fm.sharePercent.toFixed(1)}% share (< 15%)`}
-                                className="inline-flex items-center gap-1 border border-bt-red/50 bg-bt-red/15 px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase tracking-wider text-bt-red shrink-0"
+                                className="p5-tag inline-flex items-center border border-bt-red/60 bg-bt-red/15 px-2 py-0.5 text-bt-red shrink-0"
                               >
-                                <Skull className="h-3 w-3" aria-hidden="true" />
-                                &lt;15%
+                                <span className="p5-unskew inline-flex items-center gap-1 font-mono text-[9px] font-bold uppercase tracking-wider">
+                                  <Skull className="h-3 w-3" aria-hidden="true" />
+                                  &lt;15%
+                                </span>
                               </span>
                             )}
                             {fm.isUpNext && (
@@ -748,27 +750,28 @@ export function ContributionBoard({ analysis }: ContributionBoardProps) {
 
                         {/* Diverging Bar Track */}
                         <div
-                          className="mt-3 relative grid grid-cols-2 h-4 w-full bg-bt-bg border border-bt-border/80 overflow-visible"
+                          className="mt-3 relative grid grid-cols-2 h-3.5 w-full bg-bt-bg border border-bt-border/80 overflow-visible"
                           title={`${fm.name}: ${formatSignedMoney(fm.deltaFromAverageValue)} vs. ${formatMoney(analysis.fairness.averageRawValue)} average`}
                         >
                           {/* Left Half (Deficit -> extends left from center in BelTeez Red) */}
                           <div className="flex justify-end items-center h-full overflow-visible">
-                            {!isNeutral && !isAhead && isFreeloaderSkull && (
-                              <span
-                                title={`${fm.sharePercent.toFixed(1)}% share (< 15%)`}
-                                className="relative z-10 -mr-1.5 flex h-6 w-6 items-center justify-center rounded-sm border border-bt-red bg-bt-bg shadow-[0_0_8px_rgba(232,0,45,0.55)] shrink-0"
-                              >
-                                <Skull
-                                  className="h-4 w-4 text-bt-red"
-                                  aria-hidden="true"
-                                />
-                              </span>
-                            )}
                             {!isNeutral && !isAhead && (
                               <div
-                                className="h-full bg-bt-red transition-all duration-300"
+                                className="relative h-full bg-bt-red transition-all duration-300"
                                 style={{ width: `${visualWidth}%` }}
-                              />
+                              >
+                                {isFreeloaderSkull && (
+                                  <span
+                                    title={`${fm.sharePercent.toFixed(1)}% share (< 15%)`}
+                                    className="pointer-events-none absolute -left-3 top-1/2 -translate-y-1/2 z-10 flex h-6 w-6 items-center justify-center rounded-sm border border-bt-red bg-bt-bg shadow-[0_0_10px_rgba(232,0,45,0.65)]"
+                                  >
+                                    <Skull
+                                      className="h-4 w-4 text-bt-red"
+                                      aria-hidden="true"
+                                    />
+                                  </span>
+                                )}
+                              </div>
                             )}
                           </div>
 

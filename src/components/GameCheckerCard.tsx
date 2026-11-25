@@ -186,13 +186,14 @@ function BrowseGameCard({
           onInspect(game.appid);
         }
       }}
-      className={`group text-left bg-bt-surface border transition-all cursor-pointer flex flex-col overflow-hidden focus:outline-none focus:border-bt-red ${
+      className={`p5-frame-sm p5-frame-interactive group text-left cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-bt-red ${
         isSelected
-          ? "border-bt-red shadow-[0_0_0_1px_#E8002D]"
-          : "border-bt-border hover:border-bt-red/70"
+          ? "bg-bt-red"
+          : "bg-bt-border hover:bg-bt-red/75"
       }`}
     >
-      <div className="relative w-full aspect-[460/215] bg-bt-bg overflow-hidden">
+      <div className="bg-bt-elevated flex flex-col h-full overflow-hidden">
+      <div className="relative w-full aspect-[460/215] bg-bt-bg overflow-hidden border-b border-bt-border">
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
           src={game.headerImage}
@@ -316,6 +317,7 @@ function BrowseGameCard({
             Inspect →
           </span>
         </div>
+      </div>
       </div>
     </div>
   );
@@ -799,7 +801,8 @@ export function GameCheckerCard({
       {/* Spotlight Anchor & Hero Card */}
       <div ref={spotlightRef} className="scroll-mt-4">
         {result && (
-          <div className="p5-frame bg-bt-card border border-bt-border overflow-hidden">
+          <div className="p5-frame bg-bt-border">
+            <div className="bg-bt-surface overflow-hidden">
             <div className="grid grid-cols-1 lg:grid-cols-[460px_1fr]">
               {/* Left Hero Image & Pricing Column */}
               <div className="bg-bt-surface border-b lg:border-b-0 lg:border-r border-bt-border flex flex-col justify-between">
@@ -911,18 +914,24 @@ export function GameCheckerCard({
                     </h3>
                     <div className="mt-2.5 flex flex-wrap items-center gap-2">
                       {result.isFree ? (
-                        <span className="p5-tag bg-emerald-500/15 border border-emerald-500/40 text-emerald-300 inline-flex items-center gap-1.5">
-                          <CheckCircle2 className="w-3.5 h-3.5" /> Free to Play
+                        <span className="p5-tag bg-emerald-500/15 border border-emerald-500/40 px-3 py-1 text-emerald-300">
+                          <span className="p5-unskew inline-flex items-center gap-1.5 font-mono text-[10px] font-bold uppercase tracking-wider">
+                            <CheckCircle2 className="w-3.5 h-3.5" /> Free to Play
+                          </span>
                         </span>
                       ) : result.familySharingSupported ? (
-                        <span className="p5-tag bg-emerald-500/15 border border-emerald-500/40 text-emerald-300 inline-flex items-center gap-1.5">
-                          <CheckCircle2 className="w-3.5 h-3.5" /> Family
-                          Sharing Supported
+                        <span className="p5-tag bg-emerald-500/15 border border-emerald-500/40 px-3 py-1 text-emerald-300">
+                          <span className="p5-unskew inline-flex items-center gap-1.5 font-mono text-[10px] font-bold uppercase tracking-wider">
+                            <CheckCircle2 className="w-3.5 h-3.5" /> Family
+                            Sharing Supported
+                          </span>
                         </span>
                       ) : (
-                        <span className="p5-tag bg-bt-red/15 border border-bt-red/50 text-red-200 inline-flex items-center gap-1.5">
-                          <ShieldAlert className="w-3.5 h-3.5 text-bt-red" />{" "}
-                          Opted Out of Family Sharing
+                        <span className="p5-tag bg-bt-red/15 border border-bt-red/50 px-3 py-1 text-red-200">
+                          <span className="p5-unskew inline-flex items-center gap-1.5 font-mono text-[10px] font-bold uppercase tracking-wider">
+                            <ShieldAlert className="w-3.5 h-3.5 text-bt-red" />{" "}
+                            Opted Out of Family Sharing
+                          </span>
                         </span>
                       )}
                     </div>
@@ -1260,12 +1269,14 @@ export function GameCheckerCard({
                 )}
               </div>
             )}
+            </div>
           </div>
         )}
       </div>
 
       {/* 3-Tab Game Browser */}
-      <div className="p5-frame bg-bt-card border border-bt-border p-5 sm:p-6 space-y-5">
+      <div className="p5-frame bg-bt-border">
+        <div className="bg-bt-surface p-5 sm:p-7 space-y-6">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-bt-border pb-4">
           <div
             role="tablist"
@@ -1368,7 +1379,7 @@ export function GameCheckerCard({
                 No discounted Steam titles found for {regionInfo.label} right now.
               </div>
             ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
                 {discounts.map((item) => (
                   <BrowseGameCard
                     key={item.appid}
@@ -1433,7 +1444,7 @@ export function GameCheckerCard({
                 No public wishlist games found across your active family members.
               </div>
             ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
                 {wishlists.map((item) => (
                   <BrowseGameCard
                     key={item.appid}
@@ -1468,7 +1479,7 @@ export function GameCheckerCard({
                 </div>
               </div>
             ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
                 {starredGames.map((item) => (
                   <BrowseGameCard
                     key={item.appid}
@@ -1485,6 +1496,7 @@ export function GameCheckerCard({
             )}
           </div>
         )}
+        </div>
       </div>
     </div>
   );

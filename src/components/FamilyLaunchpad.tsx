@@ -17,7 +17,6 @@ import {
   ChevronUp,
   ClipboardPaste,
   Clock,
-  Globe,
   Grid2x2,
   Loader2,
   Lock,
