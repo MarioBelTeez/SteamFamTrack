@@ -1,10 +1,8 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { isDemoRoster, isDemoSteamInput } from "@/lib/demo-data";
 import { FamilyMemberInput } from "@/lib/types";
 import {
-  AlertTriangle,
   Check,
   CheckCircle2,
   ChevronDown,
@@ -28,11 +26,9 @@ interface MemberEditorModalProps {
   members: FamilyMemberInput[];
   waitlist: FamilyMemberInput[];
   hasApiKey?: boolean;
-  startFreshPrompt?: boolean;
   onSave: (
     members: FamilyMemberInput[],
-    waitlist: FamilyMemberInput[],
-    options?: { switchToLive?: boolean }
+    waitlist: FamilyMemberInput[]
   ) => void;
 }
 
@@ -63,10 +59,6 @@ interface ResolveApiResponse {
   hint?: string;
   warning?: string;
   error?: string;
-}
-
-function isDemoSteamId(value: string): boolean {
-  return isDemoSteamInput(value);
 }
 
 function isPlaceholderName(name: string): boolean {
@@ -115,23 +107,9 @@ export function MemberEditorModal({
   members,
   waitlist,
   hasApiKey = false,
-  startFreshPrompt = false,
   onSave,
 }: MemberEditorModalProps) {
-  const shouldStartFreshOnOpen = startFreshPrompt && isDemoRoster(members);
-
   const [draftMembers, setDraftMembers] = useState<FamilyMemberInput[]>(() => {
-    if (shouldStartFreshOnOpen) {
-      return [
-        {
-          id: "m-fresh-1",
-          name: "",
-          steamUrlOrId: "",
-          joinDate: "",
-          isWaitlist: false,
-        },
-      ];
-    }
     if (members.length > 0) {
       return members;
     }
@@ -146,13 +124,10 @@ export function MemberEditorModal({
     ];
   });
 
-  const [draftWaitlist, setDraftWaitlist] = useState<FamilyMemberInput[]>(() =>
-    shouldStartFreshOnOpen ? [] : waitlist
-  );
+  const [draftWaitlist, setDraftWaitlist] =
+    useState<FamilyMemberInput[]>(() => waitlist);
 
-  const [showFreshBanner, setShowFreshBanner] = useState<boolean>(
-    shouldStartFreshOnOpen
-  );
+  const [showFreshBanner, setShowFreshBanner] = useState<boolean>(false);
   const [bulkOpen, setBulkOpen] = useState<boolean>(false);
   const [bulkText, setBulkText] = useState<string>("");
   const [bulkBusy, setBulkBusy] = useState<boolean>(false);
@@ -179,13 +154,6 @@ export function MemberEditorModal({
   }, [isOpen, onClose]);
 
   if (!isOpen) return null;
-
-  const hasDemoRows =
-    draftMembers.some((m) => isDemoSteamId(m.steamUrlOrId)) ||
-    draftWaitlist.some((w) => isDemoSteamId(w.steamUrlOrId));
-
-  const showClearFreshButton =
-    hasDemoRows || draftMembers.length > 1 || draftWaitlist.length > 0;
 
   const updateRow = (
     isWait: boolean,
@@ -360,9 +328,6 @@ export function MemberEditorModal({
     }));
 
     setDraftMembers(importedRows);
-    if (isDemoRoster(draftWaitlist)) {
-      setDraftWaitlist([]);
-    }
     setVerifications({});
     setBulkOpen(false);
     setBulkText("");
@@ -417,15 +382,9 @@ export function MemberEditorModal({
       isWaitlist: true,
     }));
 
-  const hasAnyNonDemoValidActive =
-    cleanActivePreview.length > 0 &&
-    cleanActivePreview.every((m) => !isDemoSteamId(m.steamUrlOrId));
-
-  const switchToLiveOnSave = Boolean(hasApiKey && hasAnyNonDemoValidActive);
-
   const parsedBulkLines = parseBulkLines(bulkText);
   const verifiableActiveCount = draftMembers.filter(
-    (m) => m.steamUrlOrId.trim().length > 0 && !isDemoSteamId(m.steamUrlOrId)
+    (m) => m.steamUrlOrId.trim().length > 0
   ).length;
 
   const handleSubmit = () => {
@@ -435,9 +394,7 @@ export function MemberEditorModal({
       );
       return;
     }
-    onSave(cleanActivePreview, cleanWaitlistPreview, {
-      switchToLive: switchToLiveOnSave,
-    });
+    onSave(cleanActivePreview, cleanWaitlistPreview);
     onClose();
   };
 
@@ -608,18 +565,14 @@ export function MemberEditorModal({
                 )}
               </div>
 
-              {showClearFreshButton && (
-                <button
-                  type="button"
-                  onClick={handleStartFresh}
-                  className="cursor-pointer inline-flex items-center gap-1.5 border border-bt-red/45 bg-bt-bg px-3 py-1.5 font-condensed text-xs font-bold uppercase tracking-wider text-bt-red hover:bg-bt-red hover:text-white transition-colors"
-                >
-                  <RotateCcw className="h-3.5 w-3.5" />
-                  <span>
-                    {hasDemoRows ? "Clear Demo / Start Fresh" : "Start Fresh"}
-                  </span>
-                </button>
-              )}
+              <button
+                type="button"
+                onClick={handleStartFresh}
+                className="cursor-pointer inline-flex items-center gap-1.5 border border-bt-red/45 bg-bt-bg px-3 py-1.5 font-condensed text-xs font-bold uppercase tracking-wider text-bt-red hover:bg-bt-red hover:text-white transition-colors"
+              >
+                <RotateCcw className="h-3.5 w-3.5" />
+                <span>Start Fresh (Clear All)</span>
+              </button>
             </div>
           </div>
 
@@ -633,26 +586,6 @@ export function MemberEditorModal({
                   Paste your Steam Family profile URLs, vanity names, or
                   SteamID64s below. Steam Game Details must be Public.
                 </p>
-              </div>
-            )}
-
-            {/* Demo Roster Warning Banner */}
-            {hasDemoRows && !showFreshBanner && (
-              <div className="flex flex-wrap items-center justify-between gap-2 border border-amber-500/35 border-l-4 border-l-amber-400 bg-amber-500/10 px-3.5 py-2.5">
-                <div className="flex items-center gap-2 text-amber-200">
-                  <AlertTriangle className="h-4 w-4 text-amber-400 shrink-0" />
-                  <span className="font-mono text-xs">
-                    Demo placeholder IDs detected. Clear demo data or use Bulk
-                    Paste to load your real Steam Family.
-                  </span>
-                </div>
-                <button
-                  type="button"
-                  onClick={handleStartFresh}
-                  className="cursor-pointer shrink-0 border border-amber-400/50 bg-bt-bg px-2.5 py-1 font-condensed text-[11px] font-bold uppercase tracking-wider text-amber-200 hover:border-amber-300 hover:text-white transition-colors"
-                >
-                  Clear Demo
-                </button>
               </div>
             )}
 
@@ -1012,7 +945,6 @@ export function MemberEditorModal({
                   {cleanWaitlistPreview.length > 0
                     ? ` · ${cleanWaitlistPreview.length} waitlist`
                     : ""}
-                  {switchToLiveOnSave ? " · switches to Live API" : ""}
                 </span>
               ) : (
                 <span>Enter at least 1 Steam profile URL or SteamID64</span>
@@ -1033,12 +965,7 @@ export function MemberEditorModal({
                 disabled={cleanActivePreview.length === 0 || bulkBusy}
                 className="p5-btn cursor-pointer inline-flex items-center gap-1.5 bg-bt-red px-5 py-2 font-condensed text-xs font-bold uppercase tracking-widest text-white hover:bg-bt-red-hover transition-colors disabled:opacity-45 disabled:cursor-not-allowed"
               >
-                {switchToLiveOnSave && <Radio className="h-3.5 w-3.5" />}
-                <span>
-                  {switchToLiveOnSave
-                    ? "Save & Analyze Live"
-                    : "Save & Re-Analyze"}
-                </span>
+                <span>Save &amp; Re-Analyze</span>
               </button>
             </div>
           </div>

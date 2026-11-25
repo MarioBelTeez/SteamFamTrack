@@ -74,7 +74,7 @@ export interface FamilyAnalysis {
 }
 
 export interface AnalyzeResponse {
-  mode: "demo" | "live";
+  mode: "live";
   analysis: FamilyAnalysis;
   activeLibraries: MemberLibrary[];
   waitlistLibraries: MemberLibrary[];

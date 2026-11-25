@@ -2,11 +2,9 @@ import { createClient } from "@supabase/supabase-js";
 import { ChatInputCommandInteraction, EmbedBuilder } from "discord.js";
 import {
   AnalyzeResponse,
-  FamilyMemberInput,
   MemberLibrary,
   STEAM_REGIONS,
   SavedFamilyData,
-  SteamRegion,
   SwapShareDelta,
   SwapSimulationResult,
   computeSlotCooldown,
@@ -17,6 +15,9 @@ const EMBED_COLOR = 0x1b2838; // Steam dark blue
 const ACCENT_GREEN = 0x57f287;
 const ACCENT_AMBER = 0xfee75c;
 const ACCENT_RED = 0xed4245;
+
+const MISSING_SLUG_MESSAGE =
+  "No family slug provided and no default family linked. Run `/link <steam_url> <family_slug>` to set a default family, or pass `slug:<family-slug>` directly to this command.";
 
 function getApiBaseUrl(): string {
   const raw =
@@ -72,30 +73,13 @@ async function fetchFamilyBySlug(slug: string): Promise<SavedFamilyData> {
   return body;
 }
 
-async function detectAnalyzeMode(): Promise<"live" | "demo"> {
-  try {
-    const res = await fetch(`${getApiBaseUrl()}/api/analyze`);
-    if (!res.ok) return "demo";
-    const data = (await res.json()) as { hasApiKey?: boolean };
-    return data.hasApiKey ? "live" : "demo";
-  } catch {
-    return "demo";
-  }
-}
-
-async function runAnalyze(family: SavedFamilyData | null): Promise<AnalyzeResponse> {
-  const mode = family ? await detectAnalyzeMode() : "demo";
-  const payload = family
-    ? {
-        mode,
-        region: family.region,
-        members: family.members,
-        waitlist: family.waitlist,
-      }
-    : {
-        mode: "demo" as const,
-        region: "ma" as SteamRegion,
-      };
+async function runAnalyze(family: SavedFamilyData): Promise<AnalyzeResponse> {
+  const payload = {
+    mode: "live" as const,
+    region: family.region,
+    members: family.members,
+    waitlist: family.waitlist,
+  };
 
   const res = await fetch(`${getApiBaseUrl()}/api/analyze`, {
     method: "POST",
@@ -325,7 +309,9 @@ async function handleLink(
       { name: "Steam Profile", value: `\`${steamUrl}\``, inline: false },
       {
         name: "Default Family Slug",
-        value: familySlug ? `\`${familySlug}\`` : "_None (will use Demo Mode unless slug is provided)_",
+        value: familySlug
+          ? `\`${familySlug}\``
+          : "_None (pass `slug:<family-slug>` or re-run `/link <steam_url> <family_slug>` to set a default)_",
         inline: false,
       }
     )
@@ -341,13 +327,19 @@ async function handleFamilyBoard(
 
   const providedSlug = interaction.options.getString("slug", false);
   const slug = await resolveFamilySlug(interaction.user.id, providedSlug);
-  const family = slug ? await fetchFamilyBySlug(slug) : null;
+
+  if (!slug) {
+    await interaction.editReply({ content: MISSING_SLUG_MESSAGE });
+    return;
+  }
+
+  const family = await fetchFamilyBySlug(slug);
   const result = await runAnalyze(family);
 
-  const { analysis, mode } = result;
+  const { analysis } = result;
   const symbol = analysis.currencySymbol;
   const regionLabel = STEAM_REGIONS[analysis.region]?.label ?? analysis.region;
-  const titleName = family ? family.name : "Demo Steam Family";
+  const titleName = family.name;
 
   const leaderboardLines = analysis.members.map((m, idx) => {
     const medal =
@@ -385,12 +377,12 @@ async function handleFamilyBoard(
       },
       {
         name: "Region / Mode",
-        value: `${regionLabel}\n${mode === "live" ? "Live Steam" : "Demo Mode"}`,
+        value: `${regionLabel}\nLive Steam`,
         inline: true,
       }
     )
     .setFooter({
-      text: slug ? `Family slug: ${slug}` : "Demo Mode (pass a slug or /link a default)",
+      text: `Family slug: ${slug} · Live Steam`,
     })
     .setTimestamp();
 
@@ -406,10 +398,7 @@ async function handleFamilyMonthly(
   const slug = await resolveFamilySlug(interaction.user.id, providedSlug);
 
   if (!slug) {
-    await interaction.editReply({
-      content:
-        "No family slug provided and no default family linked. Pass `slug` to `/family monthly` or set one with `/link`.",
-    });
+    await interaction.editReply({ content: MISSING_SLUG_MESSAGE });
     return;
   }
 
@@ -496,7 +485,13 @@ async function handleFamilySimulate(
   const providedSlug = interaction.options.getString("slug", false);
 
   const slug = await resolveFamilySlug(interaction.user.id, providedSlug);
-  const family = slug ? await fetchFamilyBySlug(slug) : null;
+
+  if (!slug) {
+    await interaction.editReply({ content: MISSING_SLUG_MESSAGE });
+    return;
+  }
+
+  const family = await fetchFamilyBySlug(slug);
   const result = await runAnalyze(family);
 
   const target = findMemberLibrary(result.activeLibraries, removeName);
@@ -581,9 +576,7 @@ async function handleFamilySimulate(
       }
     )
     .setFooter({
-      text: `${family ? family.name : "Demo Family"} · ${
-        result.mode === "live" ? "Live Steam" : "Demo Mode"
-      }`,
+      text: `${family.name} · Live Steam`,
     })
     .setTimestamp();
 
@@ -597,22 +590,16 @@ async function handleFamilyWaitlist(
 
   const providedSlug = interaction.options.getString("slug", false);
   const slug = await resolveFamilySlug(interaction.user.id, providedSlug);
-  const family = slug ? await fetchFamilyBySlug(slug) : null;
 
-  let activeMembers: FamilyMemberInput[];
-  let waitlistMembers: FamilyMemberInput[];
-  let titleName: string;
-
-  if (family) {
-    activeMembers = family.members;
-    waitlistMembers = family.waitlist;
-    titleName = family.name;
-  } else {
-    const demo = await runAnalyze(null);
-    activeMembers = demo.activeLibraries.map((l) => l.member);
-    waitlistMembers = demo.waitlistLibraries.map((l) => l.member);
-    titleName = "Demo Steam Family";
+  if (!slug) {
+    await interaction.editReply({ content: MISSING_SLUG_MESSAGE });
+    return;
   }
+
+  const family = await fetchFamilyBySlug(slug);
+  const activeMembers = family.members;
+  const waitlistMembers = family.waitlist;
+  const titleName = family.name;
 
   const activeLines = activeMembers.map(
     (m, idx) => `**${idx + 1}. ${m.name}** — ${formatCooldownLine(m.joinDate)}`
@@ -643,7 +630,7 @@ async function handleFamilyWaitlist(
       }
     )
     .setFooter({
-      text: slug ? `Family slug: ${slug}` : "Demo Mode (pass a slug or /link a default)",
+      text: `Family slug: ${slug} · Live Steam`,
     })
     .setTimestamp();
 

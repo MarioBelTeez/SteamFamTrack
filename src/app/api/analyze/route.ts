@@ -1,10 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
 import { analyzeFamily } from "@/lib/analyzer";
-import {
-  DEMO_ACTIVE_INPUTS,
-  DEMO_WAITLIST_INPUTS,
-  buildDemoLibraries,
-} from "@/lib/demo-data";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 import { fetchMemberLibrariesLive } from "@/lib/steam";
 import { hasSupabaseConfig } from "@/lib/supabase";
@@ -25,7 +20,7 @@ export async function GET() {
 }
 
 interface AnalyzeRequestBody {
-  mode?: "demo" | "live";
+  mode?: "live";
   region?: SteamRegion;
   includeExcluded?: boolean;
   members?: FamilyMemberInput[];
@@ -38,81 +33,90 @@ export async function POST(req: NextRequest) {
     const region: SteamRegion =
       body.region && body.region in STEAM_REGIONS ? body.region : "ma";
     const includeExcluded = Boolean(body.includeExcluded);
-    const mode = body.mode ?? "demo";
 
-    const activeInputs =
-      body.members && body.members.length > 0
-        ? body.members.slice(0, 6)
-        : DEMO_ACTIVE_INPUTS;
-    const waitlistInputs = (body.waitlist ?? DEMO_WAITLIST_INPUTS).slice(0, 10);
+    const apiKey = process.env.STEAM_API_KEY;
+    if (!apiKey) {
+      return NextResponse.json(
+        {
+          error:
+            "STEAM_API_KEY is not configured on the server. Add it to .env.local to analyze live Steam libraries.",
+        },
+        { status: 400 }
+      );
+    }
 
-    let activeLibraries: MemberLibrary[];
-    let waitlistLibraries: MemberLibrary[];
-    let warnings: MemberLookupWarning[] = [];
+    const rawMembers = Array.isArray(body.members) ? body.members : [];
+    const activeInputs = rawMembers
+      .filter(
+        (m) =>
+          typeof m?.steamUrlOrId === "string" &&
+          m.steamUrlOrId.trim().length > 0
+      )
+      .slice(0, 6);
 
-    if (mode === "live") {
-      const apiKey = process.env.STEAM_API_KEY;
-      if (!apiKey) {
-        return NextResponse.json(
-          {
-            error:
-              "STEAM_API_KEY is not configured on the server. Add it to .env.local or use Demo Mode.",
-          },
-          { status: 400 }
-        );
-      }
+    if (activeInputs.length === 0) {
+      return NextResponse.json(
+        {
+          error:
+            "Add at least one Steam profile URL, vanity name, or SteamID64 to analyze.",
+        },
+        { status: 400 }
+      );
+    }
 
-      const ip = getClientIp(req.headers);
-      const rl = checkRateLimit(`live-analyze:${ip}`, 20, 10 * 60 * 1000);
-      if (!rl.allowed) {
-        return NextResponse.json(
-          {
-            error: `Rate limit reached for live Steam lookups. Try again in ${rl.resetInSeconds}s.`,
-          },
-          { status: 429, headers: { "Retry-After": String(rl.resetInSeconds) } }
-        );
-      }
+    const waitlistInputs = (Array.isArray(body.waitlist) ? body.waitlist : [])
+      .filter(
+        (m) =>
+          typeof m?.steamUrlOrId === "string" &&
+          m.steamUrlOrId.trim().length > 0
+      )
+      .slice(0, 10);
 
-      const [
-        { libraries: liveActive, warnings: activeWarnings },
-        { libraries: liveWaitlist, warnings: waitlistWarnings },
-      ] = await Promise.all([
-        fetchMemberLibrariesLive(activeInputs, region, apiKey),
-        waitlistInputs.length > 0
-          ? fetchMemberLibrariesLive(waitlistInputs, region, apiKey)
-          : Promise.resolve({
-              libraries: [] as MemberLibrary[],
-              warnings: [] as MemberLookupWarning[],
-            }),
-      ]);
+    const ip = getClientIp(req.headers);
+    const rl = checkRateLimit(`live-analyze:${ip}`, 20, 10 * 60 * 1000);
+    if (!rl.allowed) {
+      return NextResponse.json(
+        {
+          error: `Rate limit reached for live Steam lookups. Try again in ${rl.resetInSeconds}s.`,
+        },
+        { status: 429, headers: { "Retry-After": String(rl.resetInSeconds) } }
+      );
+    }
 
-      activeLibraries = liveActive;
-      waitlistLibraries = liveWaitlist;
-      warnings = [...activeWarnings, ...waitlistWarnings];
+    const [
+      { libraries: activeLibraries, warnings: activeWarnings },
+      { libraries: waitlistLibraries, warnings: waitlistWarnings },
+    ] = await Promise.all([
+      fetchMemberLibrariesLive(activeInputs, region, apiKey),
+      waitlistInputs.length > 0
+        ? fetchMemberLibrariesLive(waitlistInputs, region, apiKey)
+        : Promise.resolve({
+            libraries: [] as MemberLibrary[],
+            warnings: [] as MemberLookupWarning[],
+          }),
+    ]);
 
-      if (activeLibraries.length === 0) {
-        const failureSummary = activeWarnings
-          .map((w) => `${w.memberName}: ${w.reason}`)
-          .join("; ");
-        return NextResponse.json(
-          {
-            error: failureSummary
-              ? `Could not load any active Steam profiles: ${failureSummary}`
-              : "Could not load any active Steam profiles. Verify the Steam IDs/URLs and ensure Game Details are set to Public.",
-            warnings,
-          },
-          { status: 400 }
-        );
-      }
-    } else {
-      activeLibraries = buildDemoLibraries(activeInputs, region);
-      waitlistLibraries = buildDemoLibraries(waitlistInputs, region);
+    const warnings = [...activeWarnings, ...waitlistWarnings];
+
+    if (activeLibraries.length === 0) {
+      const failureSummary = activeWarnings
+        .map((w) => `${w.memberName}: ${w.reason}`)
+        .join("; ");
+      return NextResponse.json(
+        {
+          error: failureSummary
+            ? `Could not load any active Steam profiles: ${failureSummary}`
+            : "Could not load any active Steam profiles. Verify the Steam IDs/URLs and ensure Game Details are set to Public.",
+          warnings,
+        },
+        { status: 400 }
+      );
     }
 
     const analysis = analyzeFamily(activeLibraries, region, includeExcluded);
 
     return NextResponse.json({
-      mode,
+      mode: "live" as const,
       analysis,
       activeLibraries,
       waitlistLibraries,
