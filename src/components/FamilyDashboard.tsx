@@ -223,10 +223,15 @@ export function FamilyDashboard({
 
   useEffect(() => {
     fetch("/api/analyze")
-      .then((r) => r.json())
+      .then((r) => (r.ok ? r.json() : null))
       .then((d) => {
-        setHasApiKey(Boolean(d.hasApiKey));
-        setHasDatabase(Boolean(d.hasDatabase));
+        if (!d) return;
+        if (typeof d.hasApiKey === "boolean") {
+          setHasApiKey(d.hasApiKey);
+        }
+        if (typeof d.hasDatabase === "boolean") {
+          setHasDatabase(d.hasDatabase);
+        }
       })
       .catch(() => {});
   }, []);
