@@ -2,6 +2,8 @@
 
 # dependencies
 /node_modules
+discord-bot/node_modules/
+discord-bot/dist/
 /.pnp
 .pnp.*
 .yarn/*

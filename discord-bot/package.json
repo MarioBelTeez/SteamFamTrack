@@ -1,0 +1,23 @@
+{
+  "name": "steamfamtrack-discord-bot",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Discord bot for SteamFamTrack (Phase 3)",
+  "main": "dist/index.js",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "register": "tsx src/register.ts"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.49.1",
+    "discord.js": "^14.18.0",
+    "dotenv": "^16.4.7"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.5",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3"
+  }
+}

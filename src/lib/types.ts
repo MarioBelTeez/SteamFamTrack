@@ -75,6 +75,25 @@ export interface CatalogEntry {
   isExclusive: boolean;
 }
 
+export interface FairnessMemberStatus {
+  memberId: string;
+  name: string;
+  totalRawValue: number;
+  sharePercent: number;
+  expectedSharePercent: number;
+  deltaFromAverageValue: number;
+  deltaFromAveragePct: number;
+  isUpNext: boolean;
+}
+
+export interface FairnessSummary {
+  averageRawValue: number;
+  expectedSharePercent: number;
+  upNextMemberId: string | null;
+  upNextMemberName: string | null;
+  members: FairnessMemberStatus[];
+}
+
 export interface FamilyAnalysis {
   region: SteamRegion;
   currencySymbol: string;
@@ -86,6 +105,7 @@ export interface FamilyAnalysis {
   members: MemberContribution[];
   overlapMatrix: Record<string, Record<string, number>>;
   catalog: CatalogEntry[];
+  fairness: FairnessSummary;
 }
 
 export interface SwapShareDelta {

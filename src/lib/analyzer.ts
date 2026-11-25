@@ -1,14 +1,24 @@
-import {
+import type {
   CatalogEntry,
+  FairnessMemberStatus,
+  FairnessSummary,
   FamilyAnalysis,
   MemberContribution,
   MemberLibrary,
-  STEAM_REGIONS,
   SlotCooldownStatus,
   SteamRegion,
   SwapShareDelta,
   SwapSimulationResult,
 } from "./types";
+
+const REGION_SYMBOLS: Record<SteamRegion, string> = {
+  ma: "$",
+  us: "$",
+  eu: "€",
+  gb: "£",
+  br: "R$",
+  jp: "¥",
+};
 
 const MS_PER_DAY = 1000 * 60 * 60 * 24;
 
@@ -73,7 +83,7 @@ export function analyzeFamily(
   includeExcluded: boolean = false,
   now: Date = new Date()
 ): FamilyAnalysis {
-  const regionCfg = STEAM_REGIONS[region];
+  const currencySymbol = REGION_SYMBOLS[region];
   const gameOwners = new Map<
     number,
     { game: MemberLibrary["games"][number]; owners: MemberLibrary[] }
@@ -193,9 +203,44 @@ export function analyzeFamily(
     }))
     .sort((a, b) => b.totalRawValue - a.totalRawValue);
 
+  let fairness: FairnessSummary;
+  if (members.length === 0) {
+    fairness = {
+      averageRawValue: 0,
+      expectedSharePercent: 0,
+      upNextMemberId: null,
+      upNextMemberName: null,
+      members: [],
+    };
+  } else {
+    const averageRawValue = round2(sumCopiesValue / members.length);
+    const expectedSharePercent = round2(100 / members.length);
+    const sortedAsc = [...members].sort(
+      (a, b) => a.totalRawValue - b.totalRawValue || a.name.localeCompare(b.name)
+    );
+    const fairnessMembers: FairnessMemberStatus[] = sortedAsc.map((m, idx) => ({
+      memberId: m.memberId,
+      name: m.name,
+      totalRawValue: m.totalRawValue,
+      sharePercent: m.sharePercent,
+      expectedSharePercent,
+      deltaFromAverageValue: round2(m.totalRawValue - averageRawValue),
+      deltaFromAveragePct: round2(m.sharePercent - expectedSharePercent),
+      isUpNext: idx === 0,
+    }));
+
+    fairness = {
+      averageRawValue,
+      expectedSharePercent,
+      upNextMemberId: fairnessMembers[0].memberId,
+      upNextMemberName: fairnessMembers[0].name,
+      members: fairnessMembers,
+    };
+  }
+
   return {
     region,
-    currencySymbol: regionCfg.symbol,
+    currencySymbol,
     uniqueGamesCount: catalog.length,
     uniqueCatalogValue: round2(uniqueCatalogValue),
     sumCopiesCount,
@@ -204,6 +249,7 @@ export function analyzeFamily(
     members,
     overlapMatrix,
     catalog,
+    fairness,
   };
 }
 

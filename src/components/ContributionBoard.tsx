@@ -1,7 +1,7 @@
 "use client";
 
 import { FamilyAnalysis } from "@/lib/types";
-import { Award, CheckCircle2, Clock, Layers, Library, ShieldAlert } from "lucide-react";
+import { Award, CheckCircle2, Clock, Layers, Library, Scale, ShieldAlert } from "lucide-react";
 
 interface ContributionBoardProps {
   analysis: FamilyAnalysis;
@@ -19,6 +19,11 @@ export function ContributionBoard({ analysis }: ContributionBoardProps) {
       minimumFractionDigits: 2,
       maximumFractionDigits: 2,
     })}`;
+  };
+
+  const formatSignedMoney = (val: number) => {
+    const sign = val >= 0 ? "+" : "-";
+    return `${sign}${formatMoney(Math.abs(val))}`;
   };
 
   return (
@@ -189,6 +194,95 @@ export function ContributionBoard({ analysis }: ContributionBoardProps) {
             </tbody>
           </table>
         </div>
+      </div>
+
+      {/* Fairness Meter */}
+      <div className="rounded-xl border border-slate-800 bg-slate-900/70 p-5 space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 pb-4">
+          <div className="flex items-center gap-2.5">
+            <Scale className="h-5 w-5 text-sky-400" />
+            <div>
+              <h2 className="text-base font-semibold text-white">
+                Fairness Meter
+              </h2>
+              <p className="text-xs text-slate-400">
+                Group avg: <span className="font-mono text-slate-200">{formatMoney(analysis.fairness.averageRawValue)}</span> · Equal-share target:{" "}
+                <span className="font-mono text-slate-200">{analysis.fairness.expectedSharePercent.toFixed(1)}%</span>
+              </p>
+            </div>
+          </div>
+
+          {analysis.fairness.upNextMemberName && (
+            <div className="inline-flex items-center gap-2 rounded-full border border-amber-500/30 bg-amber-500/10 px-3 py-1 text-xs font-medium text-amber-300">
+              <span>Up Next to Contribute:</span>
+              <span className="font-semibold text-white">
+                {analysis.fairness.upNextMemberName}
+              </span>
+            </div>
+          )}
+        </div>
+
+        {analysis.fairness.members.length === 0 ? (
+          <p className="text-sm text-slate-400">No active members to compare.</p>
+        ) : (
+          <div className="space-y-3">
+            {analysis.fairness.members.map((fm) => {
+              const isAhead = fm.deltaFromAverageValue >= 0;
+              const barWidth =
+                fm.expectedSharePercent > 0
+                  ? Math.min(100, (fm.sharePercent / (fm.expectedSharePercent * 2)) * 100)
+                  : 0;
+
+              return (
+                <div
+                  key={fm.memberId}
+                  className={`rounded-lg border px-4 py-3 ${
+                    fm.isUpNext
+                      ? "border-amber-500/30 bg-amber-500/5"
+                      : "border-slate-800/80 bg-slate-950/40"
+                  }`}
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
+                    <div className="flex items-center gap-2">
+                      <span className="font-medium text-white">{fm.name}</span>
+                      {fm.isUpNext && (
+                        <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[11px] font-semibold text-amber-300 border border-amber-500/25">
+                          Up Next to Contribute
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="flex items-center gap-3 font-mono text-xs">
+                      <span className="text-slate-400">
+                        {formatMoney(fm.totalRawValue)} ({fm.sharePercent.toFixed(1)}%)
+                      </span>
+                      <span
+                        className={`font-semibold ${
+                          isAhead ? "text-emerald-400" : "text-amber-400"
+                        }`}
+                      >
+                        {formatSignedMoney(fm.deltaFromAverageValue)}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="mt-2 relative h-2 w-full rounded-full bg-slate-800 overflow-hidden">
+                    <div
+                      className={`h-full rounded-full ${
+                        isAhead ? "bg-emerald-500" : "bg-amber-400"
+                      }`}
+                      style={{ width: `${Math.max(2, barWidth)}%` }}
+                    />
+                    <div
+                      title={`Target: ${fm.expectedSharePercent.toFixed(1)}%`}
+                      className="absolute top-0 bottom-0 left-1/2 w-0.5 bg-slate-300/60"
+                    />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
       </div>
     </div>
   );
