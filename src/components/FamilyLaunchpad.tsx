@@ -47,10 +47,18 @@ export interface RecentFamilyEntry {
   updatedAt: string;
 }
 
+export interface SavedFamilyShortcut {
+  slug: string;
+  name: string;
+  role: "active" | "waitlist";
+}
+
 export interface FamilyLaunchpadProps {
   initialRegion: SteamRegion;
   hasApiKey: boolean;
   recentFamilies?: RecentFamilyEntry[];
+  savedFamilies?: SavedFamilyShortcut[];
+  onSelectSavedFamily?: (slug: string) => void;
   loading: boolean;
   error: string | null;
   steamUser?: SteamSessionUser | null;
@@ -178,6 +186,8 @@ const CAPABILITIES = [
 export function FamilyLaunchpad({
   initialRegion,
   hasApiKey,
+  savedFamilies = [],
+  onSelectSavedFamily,
   loading,
   error,
   steamUser = null,
@@ -991,6 +1001,32 @@ export function FamilyLaunchpad({
                       Signed in as {steamUser.personaName}
                     </span>
                   </div>
+                  {savedFamilies.length > 0 && onSelectSavedFamily && (
+                    <div className="space-y-2 pt-1">
+                      <div className="font-mono text-[10px] uppercase tracking-[0.18em] text-bt-dim">
+                        YOUR SAVED FAMILIES
+                      </div>
+                      {savedFamilies.map((fam) => (
+                        <button
+                          key={fam.slug}
+                          type="button"
+                          onClick={() => onSelectSavedFamily(fam.slug)}
+                          className={`cursor-pointer w-full flex items-center justify-between gap-2 px-3.5 py-2.5 text-left transition-colors ${
+                            fam.role === "active"
+                              ? "p5-btn bg-bt-red hover:bg-bt-red-hover text-white"
+                              : "bg-bt-elevated border border-bt-border hover:border-bt-red text-white"
+                          }`}
+                        >
+                          <span className="truncate font-condensed text-xs font-bold uppercase tracking-wider">
+                            {fam.role === "active"
+                              ? `Return to ${fam.name}`
+                              : `View ${fam.name} (Waitlist)`}
+                          </span>
+                          <ArrowRight className="h-3.5 w-3.5 shrink-0" />
+                        </button>
+                      ))}
+                    </div>
+                  )}
                   <p className="text-xs text-bt-muted leading-relaxed">
                     Your saved families and waitlists auto-load when you sign
                     in. You can also test any temporary lineup in{" "}

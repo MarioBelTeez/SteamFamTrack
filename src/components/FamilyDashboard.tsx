@@ -416,8 +416,21 @@ export function FamilyDashboard({
   };
 
   const handleBrandClick = (e: MouseEvent<HTMLAnchorElement>) => {
-    if (!initialFamily && hasActiveRoster) {
-      e.preventDefault();
+    if (initialFamily) return;
+    e.preventDefault();
+
+    if (activeSavedFamily) {
+      setActiveTab("board");
+      return;
+    }
+
+    const fallbackSaved = myActiveFamily ?? waitlistedFamilies[0] ?? null;
+    if (fallbackSaved) {
+      loadSavedFamily(fallbackSaved);
+      return;
+    }
+
+    if (hasActiveRoster) {
       handleResetToLaunchpad();
     }
   };
@@ -824,6 +837,29 @@ export function FamilyDashboard({
             initialRegion={region}
             hasApiKey={hasApiKey}
             steamUser={steamUser}
+            savedFamilies={[
+              ...(myActiveFamily
+                ? [
+                    {
+                      slug: myActiveFamily.slug,
+                      name: myActiveFamily.name,
+                      role: "active" as const,
+                    },
+                  ]
+                : []),
+              ...waitlistedFamilies.map((f) => ({
+                slug: f.slug,
+                name: f.name,
+                role: "waitlist" as const,
+              })),
+            ]}
+            onSelectSavedFamily={(slug) => {
+              const target =
+                myActiveFamily?.slug === slug
+                  ? myActiveFamily
+                  : waitlistedFamilies.find((f) => f.slug === slug);
+              if (target) loadSavedFamily(target);
+            }}
             recentFamilies={[]}
             loading={loading}
             error={error}
@@ -843,7 +879,7 @@ export function FamilyDashboard({
                     NAVIGATION // MODULES
                   </span>
                   <span className="font-mono text-[10px] text-bt-red">
-                    {activeNav.index}/04
+                    {activeNav.index}/{String(NAV_ITEMS.length).padStart(2, "0")}
                   </span>
                 </div>
 
