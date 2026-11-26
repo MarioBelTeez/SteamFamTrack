@@ -2,6 +2,14 @@
 
 import { useMemo, useState } from "react";
 import {
+  computeMemberStreaks,
+  filterSnapshotsByMode,
+  getIsoWeekKey,
+  getMonthKey,
+  isValidSnapshotPeriod,
+  SnapshotPeriodMode,
+} from "@/lib/snapshot-periods";
+import {
   FamilyAnalysis,
   MonthlySnapshotRecord,
   STEAM_REGIONS,
@@ -10,10 +18,13 @@ import {
 import {
   Calendar,
   Camera,
+  Flame,
   Loader2,
   Save,
+  Snowflake,
   TrendingDown,
   TrendingUp,
+  Trophy,
 } from "lucide-react";
 
 interface MonthlyHistoryProps {
@@ -21,11 +32,9 @@ interface MonthlyHistoryProps {
   analysis: FamilyAnalysis;
   snapshots: MonthlySnapshotRecord[];
   hasDatabase: boolean;
-  onSaveSnapshot?: (monthKey: string) => Promise<void>;
+  onSaveSnapshot?: (periodKey: string) => Promise<void>;
   onOpenSaveModal?: () => void;
 }
-
-const MONTH_KEY_REGEX = /^\d{4}-(0[1-9]|1[0-2])$/;
 
 export function MonthlyHistory({
   slug,
@@ -35,14 +44,33 @@ export function MonthlyHistory({
   onSaveSnapshot,
   onOpenSaveModal,
 }: MonthlyHistoryProps) {
+  const [mode, setMode] = useState<SnapshotPeriodMode>("monthly");
   const [saving, setSaving] = useState(false);
-  const [monthKey, setMonthKey] = useState<string>(() =>
-    new Date().toISOString().slice(0, 7)
-  );
-  const sym = STEAM_REGIONS[analysis.region].symbol;
-  const isValidMonth = MONTH_KEY_REGEX.test(monthKey.trim());
+  const [customPeriodKey, setCustomPeriodKey] = useState<string | null>(null);
 
-  const formatDeltaMoney = (val: number, regionCode: SteamRegion = analysis.region) => {
+  const sym = STEAM_REGIONS[analysis.region].symbol;
+  const defaultPeriodKey = useMemo(
+    () => (mode === "weekly" ? getIsoWeekKey() : getMonthKey()),
+    [mode]
+  );
+  const periodKey = customPeriodKey ?? defaultPeriodKey;
+  const isValidPeriod = isValidSnapshotPeriod(periodKey);
+  const unitLabel = mode === "weekly" ? "W" : "M";
+
+  const modeSnapshots = useMemo(
+    () => filterSnapshotsByMode(snapshots, mode),
+    [snapshots, mode]
+  );
+
+  const streaks = useMemo(
+    () => computeMemberStreaks(modeSnapshots),
+    [modeSnapshots]
+  );
+
+  const formatDeltaMoney = (
+    val: number,
+    regionCode: SteamRegion = analysis.region
+  ) => {
     const regionSym = STEAM_REGIONS[regionCode]?.symbol ?? sym;
     const sign = val > 0 ? "+" : val < 0 ? "-" : "";
     const abs = Math.abs(val);
@@ -62,9 +90,9 @@ export function MonthlyHistory({
   };
 
   const diff = useMemo(() => {
-    if (snapshots.length < 2) return null;
-    const latest = snapshots[0];
-    const prev = snapshots[1];
+    if (modeSnapshots.length < 2) return null;
+    const latest = modeSnapshots[0];
+    const prev = modeSnapshots[1];
 
     const prevMap = new Map(prev.memberBreakdown.map((m) => [m.name, m]));
     const memberDeltas = latest.memberBreakdown.map((m) => {
@@ -81,24 +109,56 @@ export function MonthlyHistory({
       };
     });
 
-    memberDeltas.sort((a, b) => b.valueDelta - a.valueDelta);
+    memberDeltas.sort(
+      (a, b) => b.valueDelta - a.valueDelta || b.gamesDelta - a.gamesDelta
+    );
+
+    const maxPositiveValueDelta = Math.max(
+      1,
+      ...memberDeltas.map((m) => Math.max(0, m.valueDelta))
+    );
+
+    const topBuyer =
+      memberDeltas.find((m) => m.gamesDelta > 0 || m.valueDelta > 0) ?? null;
+
+    let bestHotStreak: { name: string; count: number } | null = null;
+    let worstDryStreak: { name: string; count: number } | null = null;
+
+    for (const [name, s] of streaks.entries()) {
+      if (s.kind === "buying") {
+        if (!bestHotStreak || s.count > bestHotStreak.count) {
+          bestHotStreak = { name, count: s.count };
+        }
+      } else if (!worstDryStreak || s.count > worstDryStreak.count) {
+        worstDryStreak = { name, count: s.count };
+      }
+    }
 
     return {
-      latestMonth: latest.snapshotMonth,
-      prevMonth: prev.snapshotMonth,
+      latestPeriod: latest.snapshotMonth,
+      prevPeriod: prev.snapshotMonth,
       uniqueGamesDelta: latest.uniqueGamesCount - prev.uniqueGamesCount,
       uniqueValueDelta:
         Math.round((latest.uniqueCatalogValue - prev.uniqueCatalogValue) * 100) /
         100,
+      maxPositiveValueDelta,
+      topBuyer,
+      bestHotStreak,
+      worstDryStreak,
       memberDeltas,
     };
-  }, [snapshots]);
+  }, [modeSnapshots, streaks]);
+
+  const handleModeSwitch = (nextMode: SnapshotPeriodMode) => {
+    setMode(nextMode);
+    setCustomPeriodKey(null);
+  };
 
   const handleRecord = async () => {
-    if (!onSaveSnapshot || !isValidMonth) return;
+    if (!onSaveSnapshot || !isValidPeriod) return;
     setSaving(true);
     try {
-      await onSaveSnapshot(monthKey.trim());
+      await onSaveSnapshot(periodKey.trim());
     } finally {
       setSaving(false);
     }
@@ -106,18 +166,46 @@ export function MonthlyHistory({
 
   return (
     <div className="space-y-6">
-      {/* Top Snapshot Capture Strip */}
+      {/* Top Snapshot Capture & Mode Switcher Strip */}
       <div className="p5-frame bg-bt-border">
         <div className="bg-bt-surface p-5 flex flex-wrap items-center justify-between gap-4">
           <div className="flex items-start gap-3">
             <span className="tier-rail mt-0.5 h-10 w-1 shrink-0 bg-bt-red" />
             <div>
-              <h2 className="font-display text-2xl tracking-wider uppercase text-white leading-none">
-                Monthly Contribution Snapshots
-              </h2>
+              <div className="flex flex-wrap items-center gap-2.5">
+                <h2 className="font-display text-2xl tracking-wider uppercase text-white leading-none">
+                  {mode === "weekly"
+                    ? "Weekly Contribution Ledger"
+                    : "Monthly Contribution Ledger"}
+                </h2>
+                <div className="inline-flex border border-bt-border bg-bt-bg p-0.5">
+                  <button
+                    type="button"
+                    onClick={() => handleModeSwitch("monthly")}
+                    className={`cursor-pointer px-2.5 py-1 font-mono text-[10px] uppercase tracking-wider transition-colors ${
+                      mode === "monthly"
+                        ? "bg-bt-red text-white font-semibold"
+                        : "text-bt-muted hover:text-white"
+                    }`}
+                  >
+                    Monthly
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleModeSwitch("weekly")}
+                    className={`cursor-pointer px-2.5 py-1 font-mono text-[10px] uppercase tracking-wider transition-colors ${
+                      mode === "weekly"
+                        ? "bg-bt-red text-white font-semibold"
+                        : "text-bt-muted hover:text-white"
+                    }`}
+                  >
+                    Weekly
+                  </button>
+                </div>
+              </div>
               <p className="mt-1 text-xs text-bt-muted">
-                Capture a monthly ledger checkpoint to diff new games, regional
-                value added, and member % share shifts.
+                Track {mode === "weekly" ? "week-over-week" : "month-over-month"}{" "}
+                purchases, regional value added, and buying vs. dry-spell streaks.
               </p>
             </div>
           </div>
@@ -125,22 +213,22 @@ export function MonthlyHistory({
           <div className="flex flex-wrap items-center gap-3">
             <div className="flex items-center gap-2">
               <label
-                htmlFor="snapshot-month-input"
+                htmlFor="snapshot-period-input"
                 className="font-condensed text-[11px] font-bold uppercase tracking-widest text-bt-muted"
               >
-                Month
+                {mode === "weekly" ? "Week" : "Month"}
               </label>
               <input
-                id="snapshot-month-input"
+                id="snapshot-period-input"
                 type="text"
-                value={monthKey}
-                onChange={(e) => setMonthKey(e.target.value)}
+                value={periodKey}
+                onChange={(e) => setCustomPeriodKey(e.target.value)}
                 disabled={!slug || saving}
-                placeholder="YYYY-MM"
-                maxLength={7}
-                aria-invalid={!isValidMonth}
+                placeholder={mode === "weekly" ? "YYYY-Www" : "YYYY-MM"}
+                maxLength={8}
+                aria-invalid={!isValidPeriod}
                 className={`w-28 border bg-bt-bg px-3 py-2 font-mono text-sm tabular-nums text-white placeholder:text-bt-dim focus:outline-none disabled:opacity-50 ${
-                  isValidMonth
+                  isValidPeriod
                     ? "border-bt-border focus:border-bt-red"
                     : "border-bt-red"
                 }`}
@@ -151,7 +239,7 @@ export function MonthlyHistory({
               <button
                 type="button"
                 onClick={handleRecord}
-                disabled={saving || !isValidMonth || !onSaveSnapshot}
+                disabled={saving || !isValidPeriod || !onSaveSnapshot}
                 className="p5-btn cursor-pointer inline-flex items-center gap-2 bg-bt-red px-5 py-2.5 font-condensed text-xs font-bold uppercase tracking-widest text-white hover:bg-bt-red-hover transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {saving ? (
@@ -159,7 +247,7 @@ export function MonthlyHistory({
                 ) : (
                   <Camera className="h-3.5 w-3.5" />
                 )}
-                Record Snapshot
+                Record {mode === "weekly" ? "Week" : "Month"}
               </button>
             ) : hasDatabase && onOpenSaveModal ? (
               <button
@@ -187,12 +275,12 @@ export function MonthlyHistory({
               <Calendar className="h-6 w-6" />
             </div>
             <h3 className="font-display text-2xl tracking-wider uppercase text-white">
-              Save Your Group to Unlock Monthly Snapshots
+              Save Your Group to Unlock Weekly &amp; Monthly Streaks
             </h3>
             <p className="mx-auto max-w-md text-sm text-bt-muted">
-              Monthly delta tracking persists each month&apos;s contribution
-              breakdown so your Steam Family can audit who added the most games
-              and regional value over time.
+              Checkpoints persist each week&apos;s and month&apos;s contribution
+              breakdown so your Steam Family can track buying streaks, dry
+              spells, and catalog growth over time.
             </p>
             {hasDatabase && onOpenSaveModal && (
               <div className="pt-1">
@@ -209,340 +297,296 @@ export function MonthlyHistory({
         </div>
       ) : (
         <>
-          {/* Latest vs Previous Month Delta Summary Cards */}
+          {/* Vivid Summary & Streak KPI Strip */}
           {diff && (
             <div className="space-y-4">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div className="p5-frame bg-bt-border">
-                  <div className="bg-bt-surface p-5">
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="font-condensed text-xs font-bold uppercase tracking-[0.2em] text-bt-muted">
-                        Catalog Growth ({diff.prevMonth} → {diff.latestMonth})
-                      </span>
-                      {diff.uniqueGamesDelta >= 0 ? (
-                        <TrendingUp className="h-4 w-4 text-emerald-400" />
-                      ) : (
-                        <TrendingDown className="h-4 w-4 text-bt-red" />
-                      )}
-                    </div>
-                    <div
-                      className={`mt-3 font-display text-4xl sm:text-5xl tracking-wide tabular-nums leading-none ${
-                        diff.uniqueGamesDelta >= 0
-                          ? "text-emerald-400"
-                          : "text-bt-red"
-                      }`}
-                    >
-                      {diff.uniqueGamesDelta >= 0 ? "+" : ""}
-                      {diff.uniqueGamesDelta} UNIQUE GAMES
-                    </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
+                <div className="border border-emerald-500/40 bg-gradient-to-br from-emerald-500/15 via-bt-surface to-bt-surface p-5">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-condensed text-xs font-bold uppercase tracking-[0.2em] text-emerald-300">
+                      Catalog Growth
+                    </span>
+                    {diff.uniqueGamesDelta >= 0 ? (
+                      <TrendingUp className="h-4 w-4 text-emerald-400" />
+                    ) : (
+                      <TrendingDown className="h-4 w-4 text-bt-red" />
+                    )}
+                  </div>
+                  <div
+                    className={`mt-3 font-display text-4xl tracking-wide tabular-nums leading-none ${
+                      diff.uniqueGamesDelta >= 0
+                        ? "text-emerald-400"
+                        : "text-bt-red"
+                    }`}
+                  >
+                    {diff.uniqueGamesDelta >= 0 ? "+" : ""}
+                    {diff.uniqueGamesDelta} GAMES
+                  </div>
+                  <div className="mt-2 font-mono text-[10px] uppercase tracking-wider text-bt-muted">
+                    {diff.prevPeriod} → {diff.latestPeriod}
                   </div>
                 </div>
 
-                <div className="p5-frame bg-bt-border">
-                  <div className="bg-bt-surface p-5">
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="font-condensed text-xs font-bold uppercase tracking-[0.2em] text-bt-muted">
-                        Value Added ({diff.prevMonth} → {diff.latestMonth})
+                <div className="border border-amber-500/40 bg-gradient-to-br from-amber-500/15 via-bt-surface to-bt-surface p-5">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-condensed text-xs font-bold uppercase tracking-[0.2em] text-amber-300">
+                      Value Added
+                    </span>
+                    <span className="font-mono text-[10px] uppercase text-amber-200">
+                      {analysis.region.toUpperCase()}
+                    </span>
+                  </div>
+                  <div
+                    className={`mt-3 font-display text-4xl tracking-wide tabular-nums leading-none ${
+                      diff.uniqueValueDelta >= 0
+                        ? "text-amber-300"
+                        : "text-bt-red"
+                    }`}
+                  >
+                    {formatDeltaMoney(diff.uniqueValueDelta)}
+                  </div>
+                  <div className="mt-2 font-mono text-[10px] uppercase tracking-wider text-bt-muted">
+                    {diff.prevPeriod} → {diff.latestPeriod}
+                  </div>
+                </div>
+
+                <div className="border border-bt-red/50 bg-gradient-to-br from-bt-red/20 via-bt-surface to-bt-surface p-5">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-condensed text-xs font-bold uppercase tracking-[0.2em] text-bt-red">
+                      Period MVP Buyer
+                    </span>
+                    <Trophy className="h-4 w-4 text-bt-red" />
+                  </div>
+                  <div className="mt-3 font-display text-3xl tracking-wide uppercase text-white truncate">
+                    {diff.topBuyer ? diff.topBuyer.name : "NO NEW BUYS"}
+                  </div>
+                  <div className="mt-2 font-mono text-[11px] text-emerald-400 tabular-nums">
+                    {diff.topBuyer
+                      ? `+${diff.topBuyer.gamesDelta} games · ${formatDeltaMoney(
+                          diff.topBuyer.valueDelta
+                        )}`
+                      : "Waiting on next purchase"}
+                  </div>
+                </div>
+
+                <div className="border border-cyan-500/40 bg-gradient-to-br from-cyan-500/15 via-bt-surface to-bt-surface p-5">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-condensed text-xs font-bold uppercase tracking-[0.2em] text-cyan-300">
+                      Streak Radar
+                    </span>
+                    <Flame className="h-4 w-4 text-amber-400" />
+                  </div>
+                  <div className="mt-3 space-y-1.5">
+                    <div className="flex items-center justify-between gap-2 text-xs">
+                      <span className="inline-flex items-center gap-1 font-mono text-amber-300">
+                        <Flame className="h-3.5 w-3.5" />
+                        {diff.bestHotStreak
+                          ? `${diff.bestHotStreak.name}`
+                          : "No buy streak"}
                       </span>
-                      <span className="font-mono text-[11px] uppercase text-bt-muted">
-                        {analysis.region.toUpperCase()}
-                      </span>
+                      {diff.bestHotStreak && (
+                        <span className="font-mono font-bold text-amber-300 tabular-nums">
+                          {diff.bestHotStreak.count}
+                          {unitLabel}
+                        </span>
+                      )}
                     </div>
-                    <div
-                      className={`mt-3 font-display text-4xl sm:text-5xl tracking-wide tabular-nums leading-none ${
-                        diff.uniqueValueDelta >= 0
-                          ? "text-emerald-400"
-                          : "text-bt-red"
-                      }`}
-                    >
-                      {formatDeltaMoney(diff.uniqueValueDelta)}
+                    <div className="flex items-center justify-between gap-2 text-xs">
+                      <span className="inline-flex items-center gap-1 font-mono text-cyan-300">
+                        <Snowflake className="h-3.5 w-3.5" />
+                        {diff.worstDryStreak
+                          ? `${diff.worstDryStreak.name}`
+                          : "No dry spell"}
+                      </span>
+                      {diff.worstDryStreak && (
+                        <span className="font-mono font-bold text-cyan-300 tabular-nums">
+                          {diff.worstDryStreak.count}
+                          {unitLabel}
+                        </span>
+                      )}
                     </div>
                   </div>
                 </div>
               </div>
 
-              {/* Latest Month Member Delta Leaderboard */}
+              {/* Vivid Member Period Diff & Streak Table */}
               <div className="p5-frame bg-bt-border">
                 <div className="bg-bt-surface overflow-hidden">
-                  <div className="flex items-center justify-between border-b border-bt-border px-5 py-3.5">
+                  <div className="flex flex-wrap items-center justify-between gap-3 border-b border-bt-border px-5 py-4">
                     <div className="flex items-center gap-2.5">
                       <span className="tier-rail h-5 w-1 bg-bt-red" />
                       <h3 className="font-display text-xl tracking-wider uppercase text-white leading-none">
-                        Member Deltas ({diff.prevMonth} → {diff.latestMonth})
+                        Member Deltas &amp; Streaks ({diff.prevPeriod} →{" "}
+                        {diff.latestPeriod})
                       </h3>
                     </div>
+                    <span className="font-mono text-[10px] uppercase tracking-widest text-bt-muted">
+                      🔥 BUY STREAK · 🧊 DRY SPELL
+                    </span>
                   </div>
+
                   <div className="divide-y divide-bt-border/60">
-                    {diff.memberDeltas.map((m) => (
-                      <div
-                        key={m.name}
-                        className="flex flex-wrap items-center justify-between gap-2 px-5 py-3 text-sm transition-colors hover:bg-bt-elevated/50"
-                      >
-                        <span className="font-medium text-white">{m.name}</span>
-                        <div className="flex items-center gap-5 font-mono text-xs tabular-nums">
-                          <span
-                            className={
-                              m.gamesDelta > 0
-                                ? "text-emerald-400"
-                                : m.gamesDelta < 0
-                                ? "text-bt-red"
-                                : "text-bt-muted"
-                            }
-                          >
-                            {m.gamesDelta >= 0 ? "+" : ""}
-                            {m.gamesDelta} games
-                          </span>
-                          <span
-                            className={`font-semibold ${
-                              m.valueDelta > 0
-                                ? "text-emerald-400"
-                                : m.valueDelta < 0
-                                ? "text-bt-red"
-                                : "text-bt-muted"
-                            }`}
-                          >
-                            {formatDeltaMoney(m.valueDelta)}
-                          </span>
-                          <span
-                            className={`w-16 text-right ${
-                              m.shareDelta > 0
-                                ? "text-emerald-400"
-                                : m.shareDelta < 0
-                                ? "text-bt-red"
-                                : "text-bt-muted"
-                            }`}
-                          >
-                            {m.shareDelta >= 0 ? "+" : ""}
-                            {m.shareDelta.toFixed(1)}%
-                          </span>
+                    {diff.memberDeltas.map((m) => {
+                      const streak = streaks.get(m.name);
+                      const barWidth =
+                        m.valueDelta > 0
+                          ? Math.max(
+                              8,
+                              Math.round(
+                                (m.valueDelta / diff.maxPositiveValueDelta) * 100
+                              )
+                            )
+                          : 0;
+
+                      return (
+                        <div
+                          key={m.name}
+                          className="px-5 py-3.5 hover:bg-bt-elevated/50 transition-colors"
+                        >
+                          <div className="flex flex-wrap items-center justify-between gap-3">
+                            <div className="flex flex-wrap items-center gap-2.5 min-w-0">
+                              <span className="font-condensed text-base font-bold uppercase tracking-wider text-white">
+                                {m.name}
+                              </span>
+                              {streak?.kind === "buying" && (
+                                <span className="inline-flex items-center gap-1 border border-amber-400/50 bg-amber-500/20 px-2 py-0.5 font-mono text-[10px] font-bold uppercase tracking-wider text-amber-300 tabular-nums">
+                                  <Flame className="h-3 w-3 text-amber-400" />
+                                  {streak.count}
+                                  {unitLabel} BUY STREAK
+                                </span>
+                              )}
+                              {streak?.kind === "dry" && streak.count >= 2 && (
+                                <span className="inline-flex items-center gap-1 border border-cyan-400/40 bg-cyan-500/15 px-2 py-0.5 font-mono text-[10px] font-bold uppercase tracking-wider text-cyan-300 tabular-nums">
+                                  <Snowflake className="h-3 w-3 text-cyan-300" />
+                                  {streak.count}
+                                  {unitLabel} NO BUYS
+                                </span>
+                              )}
+                              {streak?.kind === "dry" && streak.count === 1 && (
+                                <span className="inline-flex items-center gap-1 border border-bt-border bg-bt-bg px-2 py-0.5 font-mono text-[10px] uppercase tracking-wider text-bt-dim tabular-nums">
+                                  0 NEW THIS {mode === "weekly" ? "WEEK" : "MONTH"}
+                                </span>
+                              )}
+                            </div>
+
+                            <div className="flex items-center gap-5 font-mono text-xs tabular-nums">
+                              <span
+                                className={
+                                  m.gamesDelta > 0
+                                    ? "text-emerald-400 font-bold"
+                                    : m.gamesDelta < 0
+                                    ? "text-bt-red font-bold"
+                                    : "text-bt-dim"
+                                }
+                              >
+                                {m.gamesDelta > 0 ? "+" : ""}
+                                {m.gamesDelta} games
+                              </span>
+                              <span
+                                className={
+                                  m.valueDelta > 0
+                                    ? "text-amber-300 font-bold"
+                                    : m.valueDelta < 0
+                                    ? "text-bt-red font-bold"
+                                    : "text-bt-dim"
+                                }
+                              >
+                                {formatDeltaMoney(m.valueDelta)}
+                              </span>
+                              <span
+                                className={`min-w-[60px] text-right ${
+                                  m.shareDelta > 0
+                                    ? "text-emerald-400"
+                                    : m.shareDelta < 0
+                                    ? "text-bt-red"
+                                    : "text-bt-dim"
+                                }`}
+                              >
+                                {m.shareDelta > 0 ? "+" : ""}
+                                {m.shareDelta.toFixed(1)}%
+                              </span>
+                            </div>
+                          </div>
+
+                          {/* Vivid activity bar */}
+                          <div className="mt-2 h-1.5 w-full bg-bt-bg overflow-hidden">
+                            {barWidth > 0 ? (
+                              <div
+                                className="h-full bg-gradient-to-r from-bt-red via-amber-400 to-emerald-400 transition-all"
+                                style={{ width: `${barWidth}%` }}
+                              />
+                            ) : (
+                              <div className="h-full w-0" />
+                            )}
+                          </div>
                         </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 </div>
               </div>
             </div>
           )}
 
-          {/* Editorial Snapshot Timeline */}
-          <div className="space-y-4">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2.5">
-                <span className="tier-rail h-5 w-1 bg-bt-red" />
-                <h3 className="font-display text-xl tracking-wider uppercase text-white leading-none">
-                  Snapshot Timeline ({snapshots.length})
-                </h3>
-              </div>
-            </div>
-
-            {snapshots.length === 0 ? (
-              <div className="p5-frame bg-bt-border">
-                <div className="bg-bt-surface p-10 text-center text-sm text-bt-muted">
-                  No monthly snapshots saved yet. Enter a month key and click
-                  &ldquo;Record Snapshot&rdquo; to establish your baseline.
+          {/* Recorded Checkpoints List */}
+          <div className="p5-frame bg-bt-border">
+            <div className="bg-bt-surface p-5 space-y-4">
+              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-bt-border pb-3">
+                <div className="flex items-center gap-2.5">
+                  <span className="tier-rail h-5 w-1 bg-bt-red" />
+                  <h3 className="font-display text-xl tracking-wider uppercase text-white leading-none">
+                    Saved {mode === "weekly" ? "Weekly" : "Monthly"} Checkpoints
+                    ({modeSnapshots.length})
+                  </h3>
                 </div>
+                <span className="font-mono text-[10px] uppercase tracking-widest text-bt-muted">
+                  Auto-captured daily at 04:15 UTC+1
+                </span>
               </div>
-            ) : (
-              <div className="space-y-4">
-                {snapshots.map((snap, idx) => {
-                  const prevSnap = snapshots[idx + 1] ?? null;
-                  const prevMemberMap = prevSnap
-                    ? new Map(prevSnap.memberBreakdown.map((m) => [m.name, m]))
-                    : null;
-                  const gamesDiff = prevSnap
-                    ? snap.uniqueGamesCount - prevSnap.uniqueGamesCount
-                    : null;
-                  const valueDiff = prevSnap
-                    ? Math.round(
-                        (snap.uniqueCatalogValue - prevSnap.uniqueCatalogValue) *
-                          100
-                      ) / 100
-                    : null;
 
-                  return (
-                    <article
+              {modeSnapshots.length === 0 ? (
+                <div className="border border-dashed border-bt-border bg-bt-bg/50 p-6 text-center text-sm text-bt-muted">
+                  No {mode} snapshots recorded yet. Click{" "}
+                  <span className="text-white font-semibold">
+                    Record {mode === "weekly" ? "Week" : "Month"}
+                  </span>{" "}
+                  above to save your first baseline checkpoint.
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+                  {modeSnapshots.map((snap, idx) => (
+                    <div
                       key={snap.id}
-                      className="border-y border-r border-bt-border border-l-2 border-l-bt-red bg-bt-surface overflow-hidden"
+                      className={`border p-4 space-y-2 ${
+                        idx === 0
+                          ? "border-bt-red/70 bg-bt-red/10"
+                          : "border-bt-border bg-bt-bg/70"
+                      }`}
                     >
-                      {/* Snapshot Header Bar */}
-                      <div className="flex flex-wrap items-center justify-between gap-4 border-b border-bt-border bg-bt-elevated/60 px-5 py-4">
-                        <div className="flex flex-wrap items-center gap-3">
-                          <span
-                            className={`p5-tag px-3 py-1 font-mono text-xs font-bold tabular-nums ${
-                              idx === 0
-                                ? "bg-bt-red text-white"
-                                : "border border-bt-border bg-bt-bg text-white"
-                            }`}
-                          >
-                            <span className="p5-unskew inline-block">
-                              {snap.snapshotMonth}
-                            </span>
-                          </span>
-                          {idx === 0 && (
-                            <span className="font-condensed text-[11px] font-bold uppercase tracking-widest text-bt-red">
-                              Latest Checkpoint
-                            </span>
-                          )}
-                          <span className="font-mono text-xs tabular-nums text-bt-muted">
-                            {snap.uniqueGamesCount} unique games (
-                            {snap.sumCopiesCount} copies)
-                          </span>
-                          {gamesDiff !== null && (
-                            <span
-                              className={`font-mono text-xs font-semibold tabular-nums ${
-                                gamesDiff > 0
-                                  ? "text-emerald-400"
-                                  : gamesDiff < 0
-                                  ? "text-bt-red"
-                                  : "text-bt-muted"
-                              }`}
-                            >
-                              {gamesDiff >= 0 ? "+" : ""}
-                              {gamesDiff}
-                            </span>
-                          )}
-                        </div>
-
-                        <div className="flex items-baseline gap-3 font-mono tabular-nums">
-                          <span className="font-display text-2xl tracking-wide text-white leading-none">
-                            {formatAbsMoney(snap.uniqueCatalogValue, snap.region)}
-                          </span>
-                          {valueDiff !== null && (
-                            <span
-                              className={`text-xs font-semibold ${
-                                valueDiff > 0
-                                  ? "text-emerald-400"
-                                  : valueDiff < 0
-                                  ? "text-bt-red"
-                                  : "text-bt-muted"
-                              }`}
-                            >
-                              ({formatDeltaMoney(valueDiff, snap.region)})
-                            </span>
-                          )}
-                          <span className="text-[11px] uppercase text-bt-muted">
-                            {snap.region.toUpperCase()}
-                          </span>
-                        </div>
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="font-mono text-sm font-bold text-white tabular-nums">
+                          {snap.snapshotMonth}
+                        </span>
+                        <span className="font-mono text-[10px] uppercase tracking-wider text-bt-muted">
+                          {snap.region.toUpperCase()}
+                        </span>
                       </div>
-
-                      {/* Per-Member Breakdown Table */}
-                      {snap.memberBreakdown.length > 0 && (
-                        <div className="overflow-x-auto">
-                          <table className="w-full text-left border-collapse">
-                            <thead>
-                              <tr className="border-b border-bt-border/80 bg-bt-bg/50 font-condensed text-[11px] font-bold uppercase tracking-[0.16em] text-bt-muted">
-                                <th className="px-5 py-2">Member</th>
-                                <th className="px-4 py-2 text-right">Games</th>
-                                <th className="px-4 py-2 text-right">
-                                  Exclusive
-                                </th>
-                                <th className="px-4 py-2 text-right">
-                                  Raw Value
-                                </th>
-                                <th className="px-5 py-2 text-right">
-                                  Share %
-                                </th>
-                              </tr>
-                            </thead>
-                            <tbody className="divide-y divide-bt-border/50 text-xs">
-                              {snap.memberBreakdown.map((m) => {
-                                const prevM = prevMemberMap?.get(m.name);
-                                const mGamesDelta = prevM
-                                  ? m.totalGames - prevM.totalGames
-                                  : null;
-                                const mValDelta = prevM
-                                  ? Math.round(
-                                      (m.totalRawValue - prevM.totalRawValue) *
-                                        100
-                                    ) / 100
-                                  : null;
-                                const mShareDelta = prevM
-                                  ? Math.round(
-                                      (m.sharePercent - prevM.sharePercent) *
-                                        100
-                                    ) / 100
-                                  : null;
-
-                                return (
-                                  <tr
-                                    key={`${snap.id}-${m.steamId64 || m.name}`}
-                                    className="transition-colors hover:bg-bt-elevated/40"
-                                  >
-                                    <td className="px-5 py-2.5 text-sm font-medium text-white">
-                                      {m.name}
-                                    </td>
-                                    <td className="px-4 py-2.5 text-right font-mono tabular-nums text-white">
-                                      <span>{m.totalGames}</span>
-                                      {mGamesDelta !== null &&
-                                        mGamesDelta !== 0 && (
-                                          <span
-                                            className={`ml-2 text-[11px] ${
-                                              mGamesDelta > 0
-                                                ? "text-emerald-400"
-                                                : "text-bt-red"
-                                            }`}
-                                          >
-                                            {mGamesDelta > 0 ? "+" : ""}
-                                            {mGamesDelta}
-                                          </span>
-                                        )}
-                                    </td>
-                                    <td className="px-4 py-2.5 text-right font-mono tabular-nums text-bt-muted">
-                                      {m.exclusiveGames}
-                                    </td>
-                                    <td className="px-4 py-2.5 text-right font-mono tabular-nums text-white">
-                                      <span>
-                                        {formatAbsMoney(
-                                          m.totalRawValue,
-                                          snap.region
-                                        )}
-                                      </span>
-                                      {mValDelta !== null && mValDelta !== 0 && (
-                                        <span
-                                          className={`ml-2 text-[11px] ${
-                                            mValDelta > 0
-                                              ? "text-emerald-400"
-                                              : "text-bt-red"
-                                          }`}
-                                        >
-                                          {formatDeltaMoney(
-                                            mValDelta,
-                                            snap.region
-                                          )}
-                                        </span>
-                                      )}
-                                    </td>
-                                    <td className="px-5 py-2.5 text-right font-mono tabular-nums text-white">
-                                      <span className="font-semibold">
-                                        {m.sharePercent.toFixed(1)}%
-                                      </span>
-                                      {mShareDelta !== null &&
-                                        mShareDelta !== 0 && (
-                                          <span
-                                            className={`ml-2 text-[11px] ${
-                                              mShareDelta > 0
-                                                ? "text-emerald-400"
-                                                : "text-bt-red"
-                                            }`}
-                                          >
-                                            {mShareDelta > 0 ? "+" : ""}
-                                            {mShareDelta.toFixed(1)}%
-                                          </span>
-                                        )}
-                                    </td>
-                                  </tr>
-                                );
-                              })}
-                            </tbody>
-                          </table>
-                        </div>
-                      )}
-                    </article>
-                  );
-                })}
-              </div>
-            )}
+                      <div className="flex items-baseline justify-between gap-2">
+                        <span className="font-display text-2xl text-emerald-400 tabular-nums">
+                          {snap.uniqueGamesCount} GAMES
+                        </span>
+                        <span className="font-mono text-xs font-bold text-amber-300 tabular-nums">
+                          {formatAbsMoney(snap.uniqueCatalogValue, snap.region)}
+                        </span>
+                      </div>
+                      <div className="font-mono text-[10px] text-bt-dim">
+                        {snap.memberBreakdown.length} members tracked
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
         </>
       )}

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSteamUserFromRequest } from "@/lib/family-access";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
+import { getMonthKey, isValidSnapshotPeriod } from "@/lib/snapshot-periods";
 import { getSteamFamDb } from "@/lib/supabase";
 import { FamilyAnalysis, STEAM_REGIONS } from "@/lib/types";
 
@@ -75,10 +76,13 @@ export async function POST(req: NextRequest, context: RouteContext) {
     if (body.snapshotMonth !== undefined && body.snapshotMonth !== "") {
       if (
         typeof body.snapshotMonth !== "string" ||
-        !/^\d{4}-(0[1-9]|1[0-2])$/.test(body.snapshotMonth)
+        !isValidSnapshotPeriod(body.snapshotMonth)
       ) {
         return NextResponse.json(
-          { error: "snapshotMonth must be in YYYY-MM format." },
+          {
+            error:
+              "snapshotMonth must be in YYYY-MM (monthly) or YYYY-Www (weekly) format.",
+          },
           { status: 400 }
         );
       }
@@ -86,8 +90,8 @@ export async function POST(req: NextRequest, context: RouteContext) {
 
     const monthKey =
       body.snapshotMonth && body.snapshotMonth.length > 0
-        ? body.snapshotMonth
-        : new Date().toISOString().slice(0, 7);
+        ? body.snapshotMonth.trim()
+        : getMonthKey();
 
     const region =
       analysis.region in STEAM_REGIONS ? analysis.region : "ma";
