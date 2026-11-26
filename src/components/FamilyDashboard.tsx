@@ -3,7 +3,14 @@
 import { type MouseEvent, useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import type { DiscordSDK } from "@discord/embedded-app-sdk";
 import { CommunityLinksCard } from "@/components/CommunityLinksCard";
+import {
+  authorizeDiscordActivity,
+  isDiscordActivityEnvironment,
+  openExternalUrl,
+  patchDiscordActivityUrls,
+} from "@/lib/discord-activity";
 import { ContributionBoard } from "@/components/ContributionBoard";
 import { FamilyLeaderboard } from "@/components/FamilyLeaderboard";
 import { GameCheckerCard } from "@/components/GameCheckerCard";
@@ -206,9 +213,16 @@ export function FamilyDashboard({
   const [steamUser, setSteamUser] = useState<SteamSessionUser | null>(null);
   const [signingOut, setSigningOut] = useState(false);
   const [refreshNonce, setRefreshNonce] = useState(0);
+  const [isDiscordActivity, setIsDiscordActivity] = useState(false);
+  const [discordActivityLoading, setDiscordActivityLoading] = useState(false);
+  const [discordUnlinked, setDiscordUnlinked] = useState<{
+    username: string;
+    linkToken: string;
+  } | null>(null);
 
   const manualLaunchRef = useRef(false);
   const isPreviewModeRef = useRef(false);
+  const discordSdkRef = useRef<DiscordSDK | null>(null);
   const noticeTimerRef = useRef<number | null>(null);
 
   const showNotice = useCallback((message: string) => {
@@ -289,8 +303,62 @@ export function FamilyDashboard({
       .catch(() => {});
   }, []);
 
+  const applyMeFamiliesResponse = useCallback(
+    (d: MeFamiliesResponse) => {
+      setSteamUser(d?.user ?? null);
+      setMyActiveFamily(d?.activeFamily ?? null);
+      setWaitlistedFamilies(
+        Array.isArray(d?.waitlistedIn) ? d.waitlistedIn : []
+      );
+      if (
+        !initialFamily &&
+        !isPreviewModeRef.current &&
+        !manualLaunchRef.current &&
+        d?.activeFamily
+      ) {
+        loadSavedFamily(d.activeFamily);
+      }
+    },
+    [initialFamily, loadSavedFamily]
+  );
+
+  const syncDiscordActivitySession = useCallback(async () => {
+    setDiscordActivityLoading(true);
+    try {
+      const { sdk, auth } = await authorizeDiscordActivity();
+      discordSdkRef.current = sdk;
+      if (auth.linked) {
+        setDiscordUnlinked(null);
+        const meRes = await fetch("/api/me/families");
+        if (meRes.ok) {
+          const meData = (await meRes.json()) as MeFamiliesResponse;
+          applyMeFamiliesResponse(meData);
+        }
+      } else if (auth.linkToken) {
+        setDiscordUnlinked({
+          username:
+            auth.discordUser?.globalName ||
+            auth.discordUser?.username ||
+            "Discord User",
+          linkToken: auth.linkToken,
+        });
+      }
+    } catch {
+      // Non-fatal: user can still use Preview Sandbox or manual launch
+    } finally {
+      setDiscordActivityLoading(false);
+    }
+  }, [applyMeFamiliesResponse]);
+
   useEffect(() => {
     let cancelled = false;
+    const inDiscord = isDiscordActivityEnvironment();
+    if (inDiscord) {
+      void patchDiscordActivityUrls();
+      queueMicrotask(() => {
+        if (!cancelled) setIsDiscordActivity(true);
+      });
+    }
 
     const params = new URLSearchParams(window.location.search);
     if (params.get("authError") === "steam_failed") {
@@ -313,18 +381,9 @@ export function FamilyDashboard({
       )
       .then((d: MeFamiliesResponse) => {
         if (cancelled) return;
-        setSteamUser(d?.user ?? null);
-        setMyActiveFamily(d?.activeFamily ?? null);
-        setWaitlistedFamilies(
-          Array.isArray(d?.waitlistedIn) ? d.waitlistedIn : []
-        );
-        if (
-          !initialFamily &&
-          !isPreviewModeRef.current &&
-          !manualLaunchRef.current &&
-          d?.activeFamily
-        ) {
-          loadSavedFamily(d.activeFamily);
+        applyMeFamiliesResponse(d);
+        if (inDiscord && !d?.user) {
+          void syncDiscordActivitySession();
         }
       })
       .catch(() => {});
@@ -332,7 +391,7 @@ export function FamilyDashboard({
     return () => {
       cancelled = true;
     };
-  }, [initialFamily, loadSavedFamily]);
+  }, [applyMeFamiliesResponse, syncDiscordActivitySession]);
 
   const triggerRefresh = useCallback(() => {
     if (members.length === 0) return;
@@ -727,6 +786,14 @@ export function FamilyDashboard({
                     {activeSavedFamily ? activeSavedFamily.name : "STEAMFAMTRACK"}
                   </h1>
                 </Link>
+                {isDiscordActivity && (
+                  <span className="p5-tag px-2.5 py-0.5 border bg-[#5865F2]/20 border-[#5865F2]/60 text-[#C7CEFF]">
+                    <span className="p5-unskew inline-flex items-center gap-1.5 font-mono text-[10px] font-medium uppercase tracking-widest">
+                      <span className="h-1.5 w-1.5 rounded-full bg-[#5865F2]" />
+                      DISCORD ACTIVITY
+                    </span>
+                  </span>
+                )}
                 <span
                   title={
                     hasApiKey
@@ -850,6 +917,57 @@ export function FamilyDashboard({
 
       {/* Main Content: Launchpad vs. Active 2-Column Workspace */}
       <main className="relative z-10 mx-auto w-full max-w-[1720px] flex-1 px-4 sm:px-6 lg:px-8 py-6 lg:py-8">
+        {isDiscordActivity && discordUnlinked && !steamUser && (
+          <div className="mb-6 border border-[#5865F2]/60 bg-bt-surface p-4 flex flex-wrap items-center justify-between gap-4">
+            <div className="space-y-1 min-w-0">
+              <div className="font-mono text-[10px] uppercase tracking-[0.2em] text-[#9AA4FF]">
+                DISCORD ACTIVITY // LINK STEAM ACCOUNT
+              </div>
+              <p className="text-sm text-bt-muted">
+                Signed in as{" "}
+                <span className="text-white font-semibold">
+                  {discordUnlinked.username}
+                </span>
+                . Verify your Steam account once to auto-load your family inside
+                Discord.
+              </p>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  const baseUrl =
+                    process.env.NEXT_PUBLIC_SITE_URL?.trim() ||
+                    "https://steam-fam-track-zdp6.vercel.app";
+                  void openExternalUrl(
+                    `${baseUrl}/api/auth/steam?discord_link=${encodeURIComponent(
+                      discordUnlinked.linkToken
+                    )}`,
+                    discordSdkRef.current
+                  );
+                }}
+                className="p5-btn cursor-pointer inline-flex items-center gap-1.5 bg-[#5865F2] hover:bg-[#4752C4] text-white font-condensed font-bold uppercase tracking-wider text-xs px-3.5 py-2 transition-colors"
+              >
+                <LogIn className="h-3.5 w-3.5 shrink-0" />
+                <span>Verify &amp; Link Steam</span>
+                <ArrowUpRight className="h-3.5 w-3.5 shrink-0" />
+              </button>
+              <button
+                type="button"
+                disabled={discordActivityLoading}
+                onClick={() => void syncDiscordActivitySession()}
+                className="cursor-pointer inline-flex items-center gap-1.5 border border-bt-border bg-bt-bg hover:border-bt-red text-white font-condensed font-bold uppercase tracking-wider text-xs px-3 py-2 transition-colors disabled:opacity-50"
+              >
+                <RefreshCw
+                  className={`h-3.5 w-3.5 ${
+                    discordActivityLoading ? "animate-spin" : ""
+                  }`}
+                />
+                <span>I&apos;ve Linked — Refresh</span>
+              </button>
+            </div>
+          </div>
+        )}
         {!hasActiveRoster ? (
           <FamilyLaunchpad
             initialRegion={region}

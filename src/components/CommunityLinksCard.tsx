@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowUpRight } from "lucide-react";
+import { ArrowUpRight, Globe } from "lucide-react";
 
 function safeHttpsUrl(value: string | undefined, fallback = ""): string {
   const trimmed = value?.trim() || "";
@@ -12,11 +12,16 @@ const DISCORD_BOT_INSTALL_URL =
   "https://discord.com/oauth2/authorize?client_id=1575252351776989296";
 const GITHUB_REPO_URL = "https://github.com/MarioBelTeez/SteamFamTrack";
 const DISCORD_SERVER_URL = safeHttpsUrl(
-  process.env.NEXT_PUBLIC_DISCORD_SERVER_URL
+  process.env.NEXT_PUBLIC_DISCORD_SERVER_URL,
+  "https://discord.gg/3FBZdMJe8m"
 );
 const STEAM_GROUP_URL = safeHttpsUrl(
   process.env.NEXT_PUBLIC_STEAM_GROUP_URL,
   "https://steamcommunity.com/groups/belteezstudio"
+);
+const BELTEEZ_STUDIO_URL = safeHttpsUrl(
+  process.env.NEXT_PUBLIC_BELTEEZ_STUDIO_URL,
+  "https://belteez.studio"
 );
 
 function DiscordIcon({ className }: { className?: string }) {
@@ -156,6 +161,21 @@ export function CommunityLinksCard() {
             </span>
           </div>
         )}
+
+        <a
+          href={BELTEEZ_STUDIO_URL}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="group flex items-center justify-between gap-2 bg-bt-bg/75 hover:bg-bt-elevated border border-bt-border/80 hover:border-bt-red/70 px-2.5 py-2 transition-colors"
+        >
+          <span className="flex items-center gap-2 min-w-0">
+            <Globe className="h-3.5 w-3.5 text-bt-red shrink-0" />
+            <span className="font-condensed text-xs font-bold uppercase tracking-wider text-white truncate">
+              BelTeez Studio
+            </span>
+          </span>
+          <ArrowUpRight className="h-3.5 w-3.5 text-bt-dim group-hover:text-bt-red transition-colors shrink-0" />
+        </a>
       </div>
     </div>
   );

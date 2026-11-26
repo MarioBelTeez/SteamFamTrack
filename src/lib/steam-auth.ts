@@ -282,3 +282,65 @@ export function getPublicOrigin(req: Request): string {
 
   return new URL(req.url).origin.replace(/\/+$/, "");
 }
+
+export function buildSteamSessionCookieOptions(
+  origin: string,
+  crossSite = false
+) {
+  const isHttps = origin.startsWith("https://");
+  return {
+    httpOnly: true,
+    sameSite: (crossSite && isHttps ? "none" : "lax") as "none" | "lax",
+    secure: isHttps,
+    path: "/",
+    maxAge: STEAM_SESSION_TTL_SECONDS,
+  };
+}
+
+export async function fetchSteamUserProfile(
+  steamId64: string
+): Promise<SteamSessionUser> {
+  const fallback: SteamSessionUser = {
+    steamId64,
+    personaName: steamId64,
+    avatarUrl: "",
+    profileUrl: `https://steamcommunity.com/profiles/${steamId64}`,
+  };
+
+  const apiKey = process.env.STEAM_API_KEY;
+  if (!apiKey) return fallback;
+
+  try {
+    const url = `https://api.steampowered.com/ISteamUser/GetPlayerSummaries/v2/?key=${encodeURIComponent(
+      apiKey
+    )}&steamids=${encodeURIComponent(steamId64)}`;
+    const res = await fetch(url, { cache: "no-store" });
+    if (!res.ok) return fallback;
+
+    const data = await res.json();
+    const player = data?.response?.players?.[0];
+    if (!player) return fallback;
+
+    return {
+      steamId64,
+      personaName:
+        typeof player.personaname === "string" && player.personaname.trim()
+          ? player.personaname
+          : steamId64,
+      avatarUrl:
+        typeof player.avatarfull === "string"
+          ? player.avatarfull
+          : typeof player.avatarmedium === "string"
+            ? player.avatarmedium
+            : typeof player.avatar === "string"
+              ? player.avatar
+              : "",
+      profileUrl:
+        typeof player.profileurl === "string" && player.profileurl.trim()
+          ? player.profileurl
+          : fallback.profileUrl,
+    };
+  } catch {
+    return fallback;
+  }
+}

@@ -2,8 +2,14 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import type { GameInfo, MemberLibrary } from "./types";
 
-const { analyzeFamily, computeSlotCooldown, findBestSwapPair, simulateSwap } =
-  (await import(`./analyzer${".ts"}`)) as typeof import("./analyzer");
+const {
+  analyzeFamily,
+  computeSlotCooldown,
+  findBestSwapPair,
+  simulateRosterChange,
+  simulateSwap,
+  splitIntoTwoFamilies,
+} = (await import(`./analyzer${".ts"}`)) as typeof import("./analyzer");
 
 function makeGame(
   appid: number,
@@ -245,5 +251,47 @@ describe("findBestSwapPair", () => {
     assert.equal(bestExcludedOn.removeId, "1");
     assert.equal(bestExcludedOn.addId, "3");
     assert.equal(bestExcludedOn.uniqueValueDelta, -10);
+  });
+});
+
+describe("simulateRosterChange", () => {
+  it("supports multi-member swaps at once", () => {
+    const g1 = makeGame(1, "Game 1", 20);
+    const g2 = makeGame(2, "Game 2", 30);
+    const g3 = makeGame(3, "Game 3", 40);
+    const g4 = makeGame(4, "Game 4", 50);
+
+    const a = makeLibrary("1", "A", [g1]);
+    const b = makeLibrary("2", "B", [g2]);
+    const c = makeLibrary("3", "C", [g3]);
+    const d = makeLibrary("4", "D", [g4]);
+
+    const res = simulateRosterChange([a, b], [c, d], "us");
+    assert.equal(res.removedMembers.length, 2);
+    assert.equal(res.addedMembers.length, 2);
+    assert.equal(res.beforeUniqueGames, 2);
+    assert.equal(res.afterUniqueGames, 2);
+    assert.equal(res.beforeUniqueValue, 50);
+    assert.equal(res.afterUniqueValue, 90);
+    assert.equal(res.uniqueValueDelta, 40);
+  });
+});
+
+describe("splitIntoTwoFamilies", () => {
+  it("balances unique games in equal-games mode and maximizes Family A in stacked-main mode", () => {
+    const m1 = makeLibrary("1", "M1", [makeGame(1, "G1", 50), makeGame(2, "G2", 50)]);
+    const m2 = makeLibrary("2", "M2", [makeGame(3, "G3", 50), makeGame(4, "G4", 50)]);
+    const m3 = makeLibrary("3", "M3", [makeGame(5, "G5", 10)]);
+    const m4 = makeLibrary("4", "M4", [makeGame(6, "G6", 10)]);
+
+    const balanced = splitIntoTwoFamilies([m1, m2, m3, m4], "equal-games");
+    assert.ok(balanced !== null);
+    assert.equal(balanced.gamesGap, 0);
+    assert.equal(balanced.familyA.uniqueGamesCount, 3);
+    assert.equal(balanced.familyB.uniqueGamesCount, 3);
+
+    const stacked = splitIntoTwoFamilies([m1, m2, m3, m4], "stacked-main");
+    assert.ok(stacked !== null);
+    assert.ok(stacked.familyA.uniqueCatalogValue >= stacked.familyB.uniqueCatalogValue);
   });
 });

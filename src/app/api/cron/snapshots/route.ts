@@ -1,6 +1,7 @@
 import crypto from "crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { analyzeFamily } from "@/lib/analyzer";
+import { getIsoWeekKey, getMonthKey } from "@/lib/snapshot-periods";
 import { fetchMemberLibrariesLive } from "@/lib/steam";
 import { getSteamFamDb, hasSupabaseConfig } from "@/lib/supabase";
 import { FamilyMemberInput, STEAM_REGIONS, SteamRegion } from "@/lib/types";
@@ -66,7 +67,10 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const currentMonth = new Date().toISOString().slice(0, 7);
+  const now = new Date();
+  const currentMonth = getMonthKey(now);
+  const currentWeek = getIsoWeekKey(now);
+  const targetPeriods = [currentMonth, currentWeek];
 
   try {
     const [
@@ -79,8 +83,8 @@ export async function POST(req: NextRequest) {
         .order("created_at", { ascending: true }),
       db
         .from("monthly_snapshots")
-        .select("family_id")
-        .eq("snapshot_month", currentMonth),
+        .select("family_id, snapshot_month")
+        .in("snapshot_month", targetPeriods),
     ]);
 
     if (famErr) {
@@ -91,13 +95,19 @@ export async function POST(req: NextRequest) {
     }
 
     const allFamilies = families ?? [];
-    const existingFamilyIds = new Set(
-      (existingSnapshots ?? []).map((s) => s.family_id as string)
-    );
+    const existingByFamily = new Map<string, Set<string>>();
+    for (const row of existingSnapshots ?? []) {
+      const fid = row.family_id as string;
+      const period = row.snapshot_month as string;
+      const set = existingByFamily.get(fid) ?? new Set<string>();
+      set.add(period);
+      existingByFamily.set(fid, set);
+    }
 
-    const missingFamilies = allFamilies.filter(
-      (f) => !existingFamilyIds.has(f.id)
-    );
+    const missingFamilies = allFamilies.filter((f) => {
+      const have = existingByFamily.get(f.id);
+      return !have || targetPeriods.some((p) => !have.has(p));
+    });
     const batch = missingFamilies.slice(0, MAX_FAMILIES_PER_RUN);
 
     let created = 0;
@@ -164,29 +174,33 @@ export async function POST(req: NextRequest) {
         }
 
         const analysis = analyzeFamily(libraries, region);
+        const havePeriods = existingByFamily.get(family.id) ?? new Set<string>();
+        const periodsToWrite = targetPeriods.filter((p) => !havePeriods.has(p));
+
+        const rows = periodsToWrite.map((period) => ({
+          family_id: family.id,
+          snapshot_month: period,
+          region,
+          unique_games_count: analysis.uniqueGamesCount,
+          unique_catalog_value: analysis.uniqueCatalogValue,
+          sum_copies_count: analysis.sumCopiesCount,
+          sum_copies_value: analysis.sumCopiesValue,
+          member_breakdown: analysis.members.map((m) => ({
+            name: m.name,
+            steamId64: m.steamId64,
+            totalGames: m.totalGames,
+            exclusiveGames: m.exclusiveGames,
+            totalRawValue: m.totalRawValue,
+            sharePercent: m.sharePercent,
+          })),
+        }));
 
         const { error: upsertErr } = await db
           .from("monthly_snapshots")
-          .upsert(
-            {
-              family_id: family.id,
-              snapshot_month: currentMonth,
-              region,
-              unique_games_count: analysis.uniqueGamesCount,
-              unique_catalog_value: analysis.uniqueCatalogValue,
-              sum_copies_count: analysis.sumCopiesCount,
-              sum_copies_value: analysis.sumCopiesValue,
-              member_breakdown: analysis.members.map((m) => ({
-                name: m.name,
-                steamId64: m.steamId64,
-                totalGames: m.totalGames,
-                exclusiveGames: m.exclusiveGames,
-                totalRawValue: m.totalRawValue,
-                sharePercent: m.sharePercent,
-              })),
-            },
-            { onConflict: "family_id,snapshot_month", ignoreDuplicates: true }
-          );
+          .upsert(rows, {
+            onConflict: "family_id,snapshot_month",
+            ignoreDuplicates: true,
+          });
 
         if (upsertErr) {
           errors.push({
@@ -196,7 +210,7 @@ export async function POST(req: NextRequest) {
           continue;
         }
 
-        created += 1;
+        created += rows.length;
       } catch (err) {
         errors.push({
           familyId: family.id,
@@ -209,6 +223,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({
       ok: true,
       month: currentMonth,
+      week: currentWeek,
       created,
       skipped,
       errors,

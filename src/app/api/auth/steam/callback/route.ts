@@ -1,12 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
   STEAM_SESSION_COOKIE,
-  STEAM_SESSION_TTL_SECONDS,
+  buildSteamSessionCookieOptions,
+  fetchSteamUserProfile,
   getPublicOrigin,
   signSteamSession,
   verifyDiscordLinkToken,
   verifySteamOpenIdCallback,
-  type SteamSessionUser,
 } from "@/lib/steam-auth";
 import { getSteamFamDb } from "@/lib/supabase";
 
@@ -42,54 +42,6 @@ function renderDiscordLinkHtml(opts: {
   </div>
 </body>
 </html>`;
-}
-
-async function fetchSteamUserProfile(
-  steamId64: string
-): Promise<SteamSessionUser> {
-  const fallback: SteamSessionUser = {
-    steamId64,
-    personaName: steamId64,
-    avatarUrl: "",
-    profileUrl: `https://steamcommunity.com/profiles/${steamId64}`,
-  };
-
-  const apiKey = process.env.STEAM_API_KEY;
-  if (!apiKey) return fallback;
-
-  try {
-    const url = `https://api.steampowered.com/ISteamUser/GetPlayerSummaries/v2/?key=${encodeURIComponent(
-      apiKey
-    )}&steamids=${encodeURIComponent(steamId64)}`;
-    const res = await fetch(url, { cache: "no-store" });
-    if (!res.ok) return fallback;
-
-    const data = await res.json();
-    const player = data?.response?.players?.[0];
-    if (!player) return fallback;
-
-    return {
-      steamId64,
-      personaName:
-        typeof player.personaname === "string" && player.personaname.trim()
-          ? player.personaname
-          : steamId64,
-      avatarUrl:
-        typeof player.avatarfull === "string"
-          ? player.avatarfull
-          : typeof player.avatarmedium === "string"
-            ? player.avatarmedium
-            : typeof player.avatar === "string"
-              ? player.avatar
-              : "",
-      profileUrl:
-        typeof player.profileurl === "string" && player.profileurl.trim()
-          ? player.profileurl
-          : fallback.profileUrl,
-    };
-  } catch {
-    return fallback;
-  }
 }
 
 export async function GET(req: NextRequest) {
@@ -177,24 +129,20 @@ export async function GET(req: NextRequest) {
         headers: { "Content-Type": "text/html; charset=utf-8" },
       }
     );
-    htmlResponse.cookies.set(STEAM_SESSION_COOKIE, token, {
-      httpOnly: true,
-      sameSite: "lax",
-      secure: origin.startsWith("https://"),
-      path: "/",
-      maxAge: STEAM_SESSION_TTL_SECONDS,
-    });
+    htmlResponse.cookies.set(
+      STEAM_SESSION_COOKIE,
+      token,
+      buildSteamSessionCookieOptions(origin)
+    );
     return htmlResponse;
   }
 
   const response = NextResponse.redirect(`${origin}/`, 302);
-  response.cookies.set(STEAM_SESSION_COOKIE, token, {
-    httpOnly: true,
-    sameSite: "lax",
-    secure: origin.startsWith("https://"),
-    path: "/",
-    maxAge: STEAM_SESSION_TTL_SECONDS,
-  });
+  response.cookies.set(
+    STEAM_SESSION_COOKIE,
+    token,
+    buildSteamSessionCookieOptions(origin)
+  );
 
   return response;
 }

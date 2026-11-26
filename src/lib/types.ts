@@ -138,6 +138,42 @@ export interface SwapSimulationResult {
   shareDeltas: SwapShareDelta[];
 }
 
+export interface MultiSwapSimulationResult {
+  removedMembers: Array<{
+    memberId: string;
+    name: string;
+    cooldown: SlotCooldownStatus;
+  }>;
+  addedMembers: Array<{
+    memberId: string;
+    name: string;
+  }>;
+  beforeUniqueGames: number;
+  afterUniqueGames: number;
+  uniqueGamesDelta: number;
+  beforeUniqueValue: number;
+  afterUniqueValue: number;
+  uniqueValueDelta: number;
+  shareDeltas: SwapShareDelta[];
+}
+
+export type TwoFamilySplitMode = "equal-games" | "equal-value" | "stacked-main";
+
+export interface SplitFamilyGroup {
+  members: MemberLibrary[];
+  uniqueGamesCount: number;
+  uniqueCatalogValue: number;
+}
+
+export interface TwoFamilySplitResult {
+  mode: TwoFamilySplitMode;
+  familyA: SplitFamilyGroup;
+  familyB: SplitFamilyGroup;
+  gamesGap: number;
+  valueGap: number;
+  combinedUniqueGames: number;
+}
+
 export interface SnapshotMemberEntry {
   name: string;
   steamId64: string;

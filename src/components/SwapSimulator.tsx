@@ -5,9 +5,15 @@ import type { DragEvent, KeyboardEvent } from "react";
 import {
   computeSlotCooldown,
   findBestSwapPair,
-  simulateSwap,
+  simulateRosterChange,
+  splitIntoTwoFamilies,
 } from "@/lib/analyzer";
-import { MemberLibrary, SteamRegion, STEAM_REGIONS } from "@/lib/types";
+import {
+  MemberLibrary,
+  SteamRegion,
+  STEAM_REGIONS,
+  TwoFamilySplitMode,
+} from "@/lib/types";
 import {
   AlertTriangle,
   ArrowRight,
@@ -15,8 +21,12 @@ import {
   CheckCircle2,
   Clock,
   GripVertical,
+  RotateCcw,
+  Scale,
   ShieldAlert,
   ShieldCheck,
+  Sparkles,
+  Users,
 } from "lucide-react";
 
 interface SwapSimulatorProps {
@@ -27,6 +37,7 @@ interface SwapSimulatorProps {
 }
 
 type RosterSide = "active" | "waitlist";
+type SimulatorTab = "multi-swap" | "two-family";
 
 interface DragPayload {
   side: RosterSide;
@@ -39,14 +50,33 @@ export function SwapSimulator({
   region,
   includeExcluded,
 }: SwapSimulatorProps) {
-  const [removeId, setRemoveId] = useState<string | null>(null);
-  const [addId, setAddId] = useState<string | null>(null);
+  const [simMode, setSimMode] = useState<SimulatorTab>("multi-swap");
+  const [splitMode, setSplitMode] = useState<TwoFamilySplitMode>("equal-games");
+  const [customActiveIds, setCustomActiveIds] = useState<string[] | null>(null);
   const [dragSource, setDragSource] = useState<DragPayload | null>(null);
   const [dragOverTarget, setDragOverTarget] = useState<DragPayload | null>(
     null
   );
 
   const sym = STEAM_REGIONS[region].symbol;
+
+  const allPool = useMemo(
+    () => [...activeLibraries, ...waitlistLibraries],
+    [activeLibraries, waitlistLibraries]
+  );
+
+  const libraryById = useMemo(() => {
+    const map = new Map<string, MemberLibrary>();
+    for (const lib of allPool) {
+      map.set(lib.member.id, lib);
+    }
+    return map;
+  }, [allPool]);
+
+  const originalActiveIdSet = useMemo(
+    () => new Set(activeLibraries.map((l) => l.member.id)),
+    [activeLibraries]
+  );
 
   const formatMoney = (val: number) => {
     const sign = val > 0 ? "+" : val < 0 ? "-" : "";
@@ -67,7 +97,7 @@ export function SwapSimulator({
 
   const libraryStats = useMemo(() => {
     const map = new Map<string, { gamesCount: number; rawValue: number }>();
-    for (const lib of [...activeLibraries, ...waitlistLibraries]) {
+    for (const lib of allPool) {
       const eligible = lib.games.filter(
         (g) => includeExcluded || !g.familySharingExcluded
       );
@@ -78,7 +108,7 @@ export function SwapSimulator({
       map.set(lib.member.id, { gamesCount: eligible.length, rawValue });
     }
     return map;
-  }, [activeLibraries, waitlistLibraries, includeExcluded]);
+  }, [allPool, includeExcluded]);
 
   const cooldownByMemberId = useMemo(() => {
     const map = new Map<string, ReturnType<typeof computeSlotCooldown>>();
@@ -89,91 +119,83 @@ export function SwapSimulator({
   }, [activeLibraries]);
 
   const bestDefaultPair = useMemo(() => {
-    const best = findBestSwapPair(
+    return findBestSwapPair(
       activeLibraries,
       waitlistLibraries,
       includeExcluded
     );
-
-    return {
-      removeId:
-        best?.removeId ??
-        activeLibraries[activeLibraries.length - 1]?.member.id ??
-        "",
-      addId: best?.addId ?? waitlistLibraries[0]?.member.id ?? "",
-    };
   }, [activeLibraries, waitlistLibraries, includeExcluded]);
 
-  const resolvedRemoveId = useMemo(() => {
-    if (removeId && activeLibraries.some((l) => l.member.id === removeId)) {
-      return removeId;
+  // Resolve current simulated active IDs (defaults to best 1-for-1 swap when waitlist exists).
+  const resolvedSimActiveIds = useMemo(() => {
+    if (customActiveIds !== null) {
+      const valid = customActiveIds.filter((id) => libraryById.has(id));
+      if (valid.length > 0 || customActiveIds.length === 0) {
+        return valid.slice(0, 6);
+      }
     }
-    return bestDefaultPair.removeId || activeLibraries[0]?.member.id || "";
-  }, [removeId, activeLibraries, bestDefaultPair.removeId]);
 
-  const resolvedAddId = useMemo(() => {
-    if (addId && waitlistLibraries.some((l) => l.member.id === addId)) {
-      return addId;
+    const base = activeLibraries.slice(0, 6).map((l) => l.member.id);
+    if (bestDefaultPair) {
+      return base.map((id) =>
+        id === bestDefaultPair.removeId ? bestDefaultPair.addId : id
+      );
     }
-    return bestDefaultPair.addId || waitlistLibraries[0]?.member.id || "";
-  }, [addId, waitlistLibraries, bestDefaultPair.addId]);
+    return base;
+  }, [customActiveIds, libraryById, activeLibraries, bestDefaultPair]);
 
-  const simulation = useMemo(() => {
-    const effectiveRemove =
-      activeLibraries.find((l) => l.member.id === resolvedRemoveId)?.member.id ??
-      activeLibraries[0]?.member.id;
-    const addLib =
-      waitlistLibraries.find((l) => l.member.id === resolvedAddId) ??
-      waitlistLibraries[0];
-    if (!effectiveRemove || !addLib) return null;
-    return simulateSwap(
-      activeLibraries,
-      effectiveRemove,
-      addLib,
-      region,
-      includeExcluded
-    );
-  }, [
-    activeLibraries,
-    waitlistLibraries,
-    resolvedRemoveId,
-    resolvedAddId,
-    region,
-    includeExcluded,
-  ]);
+  const simActiveIdSet = useMemo(
+    () => new Set(resolvedSimActiveIds),
+    [resolvedSimActiveIds]
+  );
 
   const displayedActive = useMemo(
-    () => activeLibraries.slice(0, 6),
-    [activeLibraries]
+    () =>
+      resolvedSimActiveIds
+        .map((id) => libraryById.get(id))
+        .filter((l): l is MemberLibrary => Boolean(l)),
+    [resolvedSimActiveIds, libraryById]
   );
 
   const displayedWaitlist = useMemo(
-    () => waitlistLibraries.slice(0, 6),
-    [waitlistLibraries]
+    () => allPool.filter((l) => !simActiveIdSet.has(l.member.id)).slice(0, 6),
+    [allPool, simActiveIdSet]
   );
 
-  const selectedOutLib = useMemo(
+  const simulation = useMemo(
     () =>
-      activeLibraries.find(
-        (l) => l.member.id === (simulation?.removedMemberId ?? resolvedRemoveId)
-      ) ?? activeLibraries[0],
-    [activeLibraries, simulation?.removedMemberId, resolvedRemoveId]
+      simulateRosterChange(
+        activeLibraries,
+        displayedActive,
+        region,
+        includeExcluded
+      ),
+    [activeLibraries, displayedActive, region, includeExcluded]
   );
 
-  const selectedInLib = useMemo(
+  const twoFamilySplit = useMemo(
     () =>
-      waitlistLibraries.find(
-        (l) => l.member.id === (simulation?.addedMemberId ?? resolvedAddId)
-      ) ?? displayedWaitlist[0],
-    [
-      waitlistLibraries,
-      displayedWaitlist,
-      simulation?.addedMemberId,
-      resolvedAddId,
-    ]
+      simMode === "two-family"
+        ? splitIntoTwoFamilies(allPool, splitMode, includeExcluded)
+        : null,
+    [simMode, allPool, splitMode, includeExcluded]
   );
 
-  if (displayedWaitlist.length === 0 || displayedActive.length === 0) {
+  const removedIdSet = useMemo(
+    () => new Set(simulation.removedMembers.map((m) => m.memberId)),
+    [simulation.removedMembers]
+  );
+  const addedIdSet = useMemo(
+    () => new Set(simulation.addedMembers.map((m) => m.memberId)),
+    [simulation.addedMembers]
+  );
+
+  const lockedRemovedMembers = useMemo(
+    () => simulation.removedMembers.filter((m) => !m.cooldown.isSlotUnlocked),
+    [simulation.removedMembers]
+  );
+
+  if (allPool.length < 2) {
     return (
       <div className="p5-frame bg-bt-border">
         <div className="bg-bt-surface p-10 text-center">
@@ -181,26 +203,44 @@ export function SwapSimulator({
             <ArrowRightLeft className="h-6 w-6" />
           </div>
           <h3 className="font-display text-2xl tracking-wider uppercase text-white">
-            No Waitlisted Challengers Yet
+            Need At Least 2 Members To Simulate
           </h3>
           <p className="mx-auto mt-2 max-w-md text-sm text-bt-muted">
-            Add a 7th+ friend to the waitlist via &ldquo;Edit Members&rdquo; to
-            simulate Steam Family slot swaps and inspect 1-year cooldown locks.
+            Add friends to your family or waitlist via &ldquo;Edit Members&rdquo;
+            to simulate multi-member swaps or split into 2 balanced families.
           </p>
         </div>
       </div>
     );
   }
 
-  const outStats = selectedOutLib
-    ? libraryStats.get(selectedOutLib.member.id)
-    : undefined;
-  const inStats = selectedInLib
-    ? libraryStats.get(selectedInLib.member.id)
-    : undefined;
-
-  const stagedOutId = simulation?.removedMemberId ?? resolvedRemoveId;
-  const stagedInId = simulation?.addedMemberId ?? resolvedAddId;
+  const moveMemberToSide = (
+    memberId: string,
+    targetSide: RosterSide,
+    swapWithTargetId?: string
+  ) => {
+    const current = [...resolvedSimActiveIds];
+    if (targetSide === "active") {
+      if (current.includes(memberId)) return;
+      if (swapWithTargetId && current.includes(swapWithTargetId)) {
+        setCustomActiveIds(
+          current.map((id) => (id === swapWithTargetId ? memberId : id))
+        );
+      } else if (current.length < 6) {
+        setCustomActiveIds([...current, memberId]);
+      } else {
+        // Full 6/6 and dropped on generic active zone -> replace last slot
+        setCustomActiveIds([...current.slice(0, 5), memberId]);
+      }
+    } else {
+      if (!current.includes(memberId)) return;
+      const next = current.filter((id) => id !== memberId);
+      if (swapWithTargetId && !next.includes(swapWithTargetId) && next.length < 6) {
+        next.push(swapWithTargetId);
+      }
+      setCustomActiveIds(next);
+    }
+  };
 
   const handleDragStart = (
     side: RosterSide,
@@ -263,13 +303,12 @@ export function SwapSimulator({
     }
 
     if (source && source.side !== targetSide) {
-      if (source.side === "waitlist" && targetSide === "active") {
-        setAddId(source.id);
-        setRemoveId(targetId);
-      } else if (source.side === "active" && targetSide === "waitlist") {
-        setRemoveId(source.id);
-        setAddId(targetId);
-      }
+      const isEmptyTarget = targetId.startsWith("__empty__");
+      moveMemberToSide(
+        source.id,
+        targetSide,
+        isEmptyTarget ? undefined : targetId
+      );
     }
 
     setDragSource(null);
@@ -282,11 +321,7 @@ export function SwapSimulator({
   };
 
   const handleCardSelect = (side: RosterSide, id: string) => {
-    if (side === "active") {
-      setRemoveId(id);
-    } else {
-      setAddId(id);
-    }
+    moveMemberToSide(id, side === "active" ? "waitlist" : "active");
   };
 
   const handleCardKeyDown = (
@@ -304,8 +339,7 @@ export function SwapSimulator({
     side: RosterSide,
     libs: MemberLibrary[],
     heading: string,
-    emptyLabel: string,
-    stagedId: string
+    emptyLabel: string
   ) => {
     const isActiveSide = side === "active";
 
@@ -325,7 +359,7 @@ export function SwapSimulator({
               </h3>
             </div>
             <span className="font-mono text-[10px] uppercase tracking-widest text-bt-muted">
-              Click or drag to pair
+              Drag multiple or click to move
             </span>
           </div>
 
@@ -333,25 +367,41 @@ export function SwapSimulator({
             {Array.from({ length: 6 }, (_, idx) => {
               const slotNumber = String(idx + 1).padStart(2, "0");
               const lib = libs[idx];
+              const emptyTargetId = `__empty__${side}-${slotNumber}`;
 
               if (!lib) {
+                const isEmptyHovered =
+                  dragOverTarget?.side === side &&
+                  dragOverTarget?.id === emptyTargetId;
                 return (
                   <div
-                    key={`empty-${side}-${slotNumber}`}
-                    className="border border-dashed border-bt-border/80 bg-bt-bg/60 p-3.5 flex flex-col justify-between min-h-[126px]"
+                    key={emptyTargetId}
+                    onDragOver={(e) => handleDragOver(side, emptyTargetId, e)}
+                    onDragLeave={(e) => handleDragLeave(side, emptyTargetId, e)}
+                    onDrop={(e) => handleDrop(side, emptyTargetId, e)}
+                    className={`border border-dashed p-3.5 flex flex-col justify-between min-h-[126px] transition-colors ${
+                      isEmptyHovered
+                        ? isActiveSide
+                          ? "border-bt-red bg-bt-red/15"
+                          : "border-emerald-400 bg-emerald-500/15"
+                        : "border-bt-border/80 bg-bt-bg/60"
+                    }`}
                   >
                     <span className="font-mono text-[10px] font-semibold uppercase tracking-widest text-bt-dim tabular-nums">
                       SLOT {slotNumber}
                     </span>
                     <span className="font-condensed text-xs font-bold uppercase tracking-wider text-bt-muted">
-                      {emptyLabel}
+                      {isEmptyHovered ? "DROP TO MOVE HERE" : emptyLabel}
                     </span>
                   </div>
                 );
               }
 
               const memberId = lib.member.id;
-              const isStaged = stagedId === memberId;
+              const isNewlyAdded =
+                isActiveSide && !originalActiveIdSet.has(memberId);
+              const isNewlyRemoved =
+                !isActiveSide && originalActiveIdSet.has(memberId);
               const isDragging =
                 dragSource?.side === side && dragSource?.id === memberId;
               const isValidDrop =
@@ -364,9 +414,7 @@ export function SwapSimulator({
                 gamesCount: lib.games.length,
                 rawValue: 0,
               };
-              const cooldown = isActiveSide
-                ? cooldownByMemberId.get(memberId)
-                : undefined;
+              const cooldown = cooldownByMemberId.get(memberId);
               const initials = (lib.member.name || lib.personaName || "??")
                 .slice(0, 2)
                 .toUpperCase();
@@ -375,10 +423,10 @@ export function SwapSimulator({
                 ? isActiveSide
                   ? "bg-bt-red ring-2 ring-white/80"
                   : "bg-emerald-400 ring-2 ring-white/80"
-                : isStaged
-                ? isActiveSide
-                  ? "bg-bt-red"
-                  : "bg-emerald-500"
+                : isNewlyAdded
+                ? "bg-emerald-500"
+                : isNewlyRemoved
+                ? "bg-bt-red"
                 : isValidDrop
                 ? isActiveSide
                   ? "bg-bt-red/70"
@@ -400,51 +448,31 @@ export function SwapSimulator({
                   onDragLeave={(e) => handleDragLeave(side, memberId, e)}
                   onDrop={(e) => handleDrop(side, memberId, e)}
                   onDragEnd={handleDragEnd}
-                  aria-pressed={isStaged}
-                  className={`p5-frame-sm p5-frame-interactive cursor-grab active:cursor-grabbing text-left transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-white ${frameClass} ${
-                    isDragging ? "opacity-45" : ""
+                  className={`p5-frame cursor-grab active:cursor-grabbing transition-all select-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-bt-red ${frameClass} ${
+                    isDragging ? "opacity-45 scale-[0.98]" : ""
                   }`}
                 >
-                  <div
-                    className={`bg-bt-elevated p-3.5 h-full min-h-[126px] flex flex-col justify-between gap-2.5 transition-colors ${
-                      isDropHovered
-                        ? isActiveSide
-                          ? "bg-bt-red/15"
-                          : "bg-emerald-500/15"
-                        : ""
-                    }`}
-                  >
-                    <div className="flex items-center justify-between gap-1.5">
-                      <span className="inline-flex items-center gap-1 font-mono text-[10px] font-semibold uppercase tracking-widest text-bt-muted tabular-nums">
+                  <div className="bg-bt-bg p-3.5 h-full flex flex-col justify-between gap-3 min-h-[126px]">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="inline-flex items-center gap-1 font-mono text-[10px] font-semibold uppercase tracking-widest text-bt-dim tabular-nums">
                         <GripVertical className="h-3 w-3 text-bt-dim" />
                         {slotNumber}
                       </span>
 
                       <div className="flex items-center gap-1.5">
-                        {isActiveSide && cooldown && (
-                          <span
-                            className={`font-mono text-[10px] font-semibold uppercase tabular-nums ${
-                              cooldown.isSlotUnlocked
-                                ? "text-emerald-400"
-                                : "text-amber-300"
-                            }`}
-                          >
-                            {cooldown.isSlotUnlocked
-                              ? "Unlocked"
-                              : `${cooldown.daysUntilUnlock}d lock`}
+                        {cooldown && !cooldown.isSlotUnlocked && (
+                          <span className="font-mono text-[10px] font-semibold uppercase tracking-wider text-amber-400 tabular-nums">
+                            {cooldown.daysUntilUnlock}D LOCK
                           </span>
                         )}
-                        {isStaged && (
-                          <span
-                            className={`p5-tag shrink-0 px-1.5 py-0.5 font-condensed text-[9px] font-bold uppercase tracking-widest ${
-                              isActiveSide
-                                ? "bg-bt-red text-white"
-                                : "bg-emerald-500 text-bt-bg"
-                            }`}
-                          >
-                            <span className="p5-unskew inline-block">
-                              {isActiveSide ? "OUT" : "IN"}
-                            </span>
+                        {isNewlyAdded && (
+                          <span className="p5-tag bg-emerald-500 px-1.5 py-0.5 font-condensed text-[9px] font-bold uppercase tracking-widest text-bt-bg">
+                            <span className="p5-unskew inline-block">IN</span>
+                          </span>
+                        )}
+                        {isNewlyRemoved && (
+                          <span className="p5-tag bg-bt-red px-1.5 py-0.5 font-condensed text-[9px] font-bold uppercase tracking-widest text-white">
+                            <span className="p5-unskew inline-block">OUT</span>
                           </span>
                         )}
                       </div>
@@ -456,29 +484,36 @@ export function SwapSimulator({
                         <img
                           src={lib.avatarUrl}
                           alt={lib.member.name}
-                          draggable={false}
-                          className="h-8 w-8 shrink-0 object-cover border border-bt-border"
+                          width={34}
+                          height={34}
+                          className={`h-8 w-8 shrink-0 object-cover border ${
+                            isNewlyAdded
+                              ? "border-emerald-400"
+                              : isNewlyRemoved
+                              ? "border-bt-red"
+                              : "border-bt-border"
+                          }`}
                         />
                       ) : (
-                        <div className="h-8 w-8 shrink-0 border border-bt-border bg-bt-bg flex items-center justify-center font-mono text-[10px] font-semibold text-bt-muted">
+                        <div className="flex h-8 w-8 shrink-0 items-center justify-center border border-bt-border bg-bt-surface font-mono text-xs font-bold text-bt-muted">
                           {initials}
                         </div>
                       )}
                       <div className="min-w-0">
-                        <div className="truncate font-condensed text-sm font-bold uppercase tracking-wide text-white leading-tight">
+                        <div className="font-condensed text-sm font-bold uppercase tracking-wider text-white truncate">
                           {lib.member.name}
                         </div>
-                        <div className="truncate font-mono text-[10px] text-bt-muted tabular-nums">
+                        <div className="font-mono text-[11px] tabular-nums text-bt-muted">
                           {stats.gamesCount} games
                         </div>
                       </div>
                     </div>
 
-                    <div className="flex items-center justify-between border-t border-bt-border pt-2">
-                      <span className="font-condensed text-[10px] font-bold uppercase tracking-widest text-bt-muted">
-                        Raw
+                    <div className="flex items-center justify-between gap-2 border-t border-bt-border/80 pt-2">
+                      <span className="font-mono text-[10px] uppercase tracking-wider text-bt-dim">
+                        RAW
                       </span>
-                      <span className="font-mono text-xs font-semibold tabular-nums text-emerald-400">
+                      <span className="font-mono text-xs font-bold tabular-nums text-emerald-400">
                         {formatAbsMoney(stats.rawValue)}
                       </span>
                     </div>
@@ -494,177 +529,246 @@ export function SwapSimulator({
 
   return (
     <div className="space-y-6">
-      {/* Side-by-Side OUT vs IN Tactical Selector Deck */}
+      {/* Top Mode Switcher: Multi-Swap Simulator vs. 2-Family Fair Splitter */}
       <div className="p5-frame bg-bt-border">
-        <div className="bg-bt-surface p-5 sm:p-6">
-          <div className="mb-5 flex flex-wrap items-center justify-between gap-3 border-b border-bt-border pb-4">
-            <div className="flex items-center gap-3">
-              <span aria-hidden="true" className="h-6 w-1 bg-bt-red" />
-              <div>
-                <h2 className="font-display text-2xl tracking-wider uppercase text-white leading-none">
-                  Swap &amp; Cooldown Simulator
-                </h2>
-                <p className="mt-1 text-xs text-bt-muted">
-                  Stage an active slot transfer and preview unique catalog
-                  impact before committing a 1-year Steam Family lock.
-                </p>
-              </div>
-            </div>
-            <span className="p5-tag bg-bt-elevated border border-bt-border px-3 py-1 font-condensed text-[11px] font-bold uppercase tracking-widest text-bt-muted">
-              <span className="p5-unskew inline-block">
-                REGION // {region.toUpperCase()}
+        <div className="bg-bt-surface px-5 py-4 flex flex-wrap items-center justify-between gap-4">
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setSimMode("multi-swap")}
+              className={`cursor-pointer inline-flex items-center gap-2 px-3.5 py-2 font-condensed text-xs font-bold uppercase tracking-wider border transition-colors ${
+                simMode === "multi-swap"
+                  ? "bg-bt-red border-bt-red text-white"
+                  : "bg-bt-bg border-bt-border text-bt-muted hover:text-white hover:border-bt-red/60"
+              }`}
+            >
+              <ArrowRightLeft className="h-3.5 w-3.5" />
+              Multi-Swap Simulator
+            </button>
+            <button
+              type="button"
+              onClick={() => setSimMode("two-family")}
+              className={`cursor-pointer inline-flex items-center gap-2 px-3.5 py-2 font-condensed text-xs font-bold uppercase tracking-wider border transition-colors ${
+                simMode === "two-family"
+                  ? "bg-bt-red border-bt-red text-white"
+                  : "bg-bt-bg border-bt-border text-bt-muted hover:text-white hover:border-bt-red/60"
+              }`}
+            >
+              <Scale className="h-3.5 w-3.5" />
+              2-Family Fair Splitter ({Math.min(12, allPool.length)} Members)
+            </button>
+          </div>
+
+          {simMode === "multi-swap" ? (
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="font-mono text-[11px] uppercase tracking-wider text-bt-muted">
+                STAGED:{" "}
+                <span className="text-bt-red font-semibold">
+                  {simulation.removedMembers.length} OUT
+                </span>{" "}
+                ·{" "}
+                <span className="text-emerald-400 font-semibold">
+                  {simulation.addedMembers.length} IN
+                </span>
               </span>
-            </span>
-          </div>
-
-          <div className="grid grid-cols-1 lg:grid-cols-[1fr_auto_1fr] gap-4 items-center">
-            {/* OUT Selector Card */}
-            <div className="p5-frame-sm bg-bt-red/50">
-              <div className="bg-bt-elevated p-4">
-                <div className="mb-3 flex items-center justify-between gap-2">
-                  <span className="p5-tag bg-bt-red px-2.5 py-0.5 font-condensed text-[11px] font-bold uppercase tracking-widest text-white">
-                    <span className="p5-unskew inline-block">
-                      OUT // ACTIVE MEMBER
-                    </span>
-                  </span>
-                  {selectedOutLib?.member.joinDate && (
-                    <span className="font-mono text-[11px] tabular-nums text-bt-muted">
-                      JOINED {selectedOutLib.member.joinDate}
-                    </span>
-                  )}
-                </div>
-
-                <label
-                  htmlFor="swap-out-select"
-                  className="mb-1.5 block font-condensed text-xs font-bold uppercase tracking-wider text-bt-muted"
+              {bestDefaultPair && (
+                <button
+                  type="button"
+                  onClick={() => setCustomActiveIds(null)}
+                  className="cursor-pointer inline-flex items-center gap-1.5 border border-bt-border bg-bt-bg hover:border-emerald-500/70 px-2.5 py-1.5 font-mono text-[10px] uppercase tracking-wider text-bt-muted hover:text-white transition-colors"
                 >
-                  Departing Active Slot
-                </label>
-                <select
-                  id="swap-out-select"
-                  value={stagedOutId}
-                  onChange={(e) => setRemoveId(e.target.value)}
-                  className="w-full cursor-pointer border border-bt-border bg-bt-bg px-3 py-2.5 font-mono text-sm text-white focus:border-bt-red focus:outline-none"
-                >
-                  {activeLibraries.map((lib) => {
-                    const count =
-                      libraryStats.get(lib.member.id)?.gamesCount ??
-                      lib.games.length;
-                    return (
-                      <option key={lib.member.id} value={lib.member.id}>
-                        {lib.member.name} ({count} games)
-                      </option>
-                    );
-                  })}
-                </select>
-
-                {outStats && (
-                  <div className="mt-3 flex items-center justify-between border-t border-bt-border/80 pt-2.5 font-mono text-xs tabular-nums">
-                    <span className="text-bt-muted">
-                      {outStats.gamesCount} eligible titles
-                    </span>
-                    <span className="font-semibold text-white">
-                      {formatAbsMoney(outStats.rawValue)} raw
-                    </span>
-                  </div>
-                )}
-              </div>
-            </div>
-
-            {/* Central Crimson Swap Chevron Badge */}
-            <div className="flex justify-center">
-              <div
-                aria-hidden="true"
-                className="p5-frame-sm bg-bt-red shadow-[0_0_24px_rgb(var(--bt-accent-rgb)/0.4)]"
+                  <Sparkles className="h-3 w-3 text-emerald-400" />
+                  Best 1-for-1
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() =>
+                  setCustomActiveIds(
+                    activeLibraries.slice(0, 6).map((l) => l.member.id)
+                  )
+                }
+                className="cursor-pointer inline-flex items-center gap-1.5 border border-bt-border bg-bt-bg hover:border-bt-red/70 px-2.5 py-1.5 font-mono text-[10px] uppercase tracking-wider text-bt-muted hover:text-white transition-colors"
               >
-                <div className="flex h-12 w-12 items-center justify-center bg-bt-red text-white">
-                  <ArrowRightLeft className="h-5 w-5" />
-                </div>
-              </div>
+                <RotateCcw className="h-3 w-3" />
+                Reset
+              </button>
             </div>
-
-            {/* IN Selector Card */}
-            <div className="p5-frame-sm bg-emerald-500/45">
-              <div className="bg-bt-elevated p-4">
-                <div className="mb-3 flex items-center justify-between gap-2">
-                  <span className="p5-tag bg-emerald-500 px-2.5 py-0.5 font-condensed text-[11px] font-bold uppercase tracking-widest text-bt-bg">
-                    <span className="p5-unskew inline-block">
-                      IN // WAITLIST CHALLENGER
-                    </span>
-                  </span>
-                  <span className="font-mono text-[11px] uppercase tabular-nums text-bt-muted">
-                    {displayedWaitlist.length} / 6 QUEUED
-                  </span>
-                </div>
-
-                <label
-                  htmlFor="swap-in-select"
-                  className="mb-1.5 block font-condensed text-xs font-bold uppercase tracking-wider text-bt-muted"
+          ) : (
+            <div className="flex flex-wrap items-center gap-1.5">
+              {(
+                [
+                  { id: "equal-games", label: "Equal Games" },
+                  { id: "equal-value", label: "Equal Value" },
+                  { id: "stacked-main", label: "Stacked Main + B-Team" },
+                ] as const
+              ).map((opt) => (
+                <button
+                  key={opt.id}
+                  type="button"
+                  onClick={() => setSplitMode(opt.id)}
+                  className={`cursor-pointer px-3 py-1.5 font-mono text-[10px] uppercase tracking-wider border transition-colors ${
+                    splitMode === opt.id
+                      ? "bg-emerald-500/20 border-emerald-400 text-emerald-300 font-semibold"
+                      : "bg-bt-bg border-bt-border text-bt-muted hover:text-white"
+                  }`}
                 >
-                  Incoming Challenger
-                </label>
-                <select
-                  id="swap-in-select"
-                  value={stagedInId}
-                  onChange={(e) => setAddId(e.target.value)}
-                  className="w-full cursor-pointer border border-bt-border bg-bt-bg px-3 py-2.5 font-mono text-sm text-white focus:border-bt-red focus:outline-none"
-                >
-                  {waitlistLibraries.map((lib) => {
-                    const count =
-                      libraryStats.get(lib.member.id)?.gamesCount ??
-                      lib.games.length;
-                    return (
-                      <option key={lib.member.id} value={lib.member.id}>
-                        {lib.member.name} ({count} games)
-                      </option>
-                    );
-                  })}
-                </select>
-
-                {inStats && (
-                  <div className="mt-3 flex items-center justify-between border-t border-bt-border/80 pt-2.5 font-mono text-xs tabular-nums">
-                    <span className="text-bt-muted">
-                      {inStats.gamesCount} eligible titles
-                    </span>
-                    <span className="font-semibold text-white">
-                      {formatAbsMoney(inStats.rawValue)} raw
-                    </span>
-                  </div>
-                )}
-              </div>
+                  {opt.label}
+                </button>
+              ))}
             </div>
-          </div>
+          )}
         </div>
       </div>
 
-      {simulation && (
+      {simMode === "two-family" && twoFamilySplit ? (
+        <div className="space-y-5">
+          {/* Split Summary Banner */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="p5-frame bg-bt-border">
+              <div className="bg-bt-surface p-4">
+                <div className="font-mono text-[10px] uppercase tracking-[0.2em] text-bt-muted">
+                  SPLIT OBJECTIVE
+                </div>
+                <div className="mt-1.5 font-display text-2xl tracking-wider uppercase text-white">
+                  {splitMode === "equal-games"
+                    ? "BALANCED UNIQUE GAMES"
+                    : splitMode === "equal-value"
+                    ? "BALANCED CATALOG VALUE"
+                    : "STACKED MAIN + B-TEAM"}
+                </div>
+              </div>
+            </div>
+            <div className="p5-frame bg-bt-border">
+              <div className="bg-bt-surface p-4">
+                <div className="font-mono text-[10px] uppercase tracking-[0.2em] text-bt-muted">
+                  GAMES GAP (A VS B)
+                </div>
+                <div className="mt-1.5 font-display text-2xl tracking-wider uppercase text-emerald-400 tabular-nums">
+                  {twoFamilySplit.gamesGap} GAMES
+                </div>
+              </div>
+            </div>
+            <div className="p5-frame bg-bt-border">
+              <div className="bg-bt-surface p-4">
+                <div className="font-mono text-[10px] uppercase tracking-[0.2em] text-bt-muted">
+                  VALUE GAP (A VS B)
+                </div>
+                <div className="mt-1.5 font-display text-2xl tracking-wider uppercase text-amber-300 tabular-nums">
+                  {formatAbsMoney(twoFamilySplit.valueGap)}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Family A & Family B Cards */}
+          <div className="grid grid-cols-1 xl:grid-cols-2 gap-5">
+            {(
+              [
+                {
+                  title: "FAMILY A",
+                  accent: "bg-bt-red",
+                  group: twoFamilySplit.familyA,
+                },
+                {
+                  title: "FAMILY B",
+                  accent: "bg-emerald-500",
+                  group: twoFamilySplit.familyB,
+                },
+              ] as const
+            ).map(({ title, accent, group }) => (
+              <div key={title} className="p5-frame bg-bt-border">
+                <div className="bg-bt-surface p-5 space-y-4 h-full">
+                  <div className="flex flex-wrap items-center justify-between gap-3 border-b border-bt-border pb-3">
+                    <div className="flex items-center gap-2.5">
+                      <span className={`tier-rail h-6 w-1 ${accent}`} />
+                      <div>
+                        <h3 className="font-display text-2xl tracking-wider uppercase text-white leading-none">
+                          {title} · {group.members.length} / 6
+                        </h3>
+                        <span className="font-mono text-[11px] uppercase tracking-wider text-bt-muted tabular-nums">
+                          {group.uniqueGamesCount} unique games ·{" "}
+                          <span className="text-emerald-400 font-semibold">
+                            {formatAbsMoney(group.uniqueCatalogValue)}
+                          </span>
+                        </span>
+                      </div>
+                    </div>
+                    <Users className="h-4 w-4 text-bt-dim" />
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    {group.members.map((lib) => {
+                      const stats = libraryStats.get(lib.member.id) ?? {
+                        gamesCount: lib.games.length,
+                        rawValue: 0,
+                      };
+                      const initials = (
+                        lib.member.name ||
+                        lib.personaName ||
+                        "??"
+                      )
+                        .slice(0, 2)
+                        .toUpperCase();
+                      return (
+                        <div
+                          key={lib.member.id}
+                          className="border border-bt-border bg-bt-bg p-3 flex items-center justify-between gap-2.5"
+                        >
+                          <div className="flex items-center gap-2.5 min-w-0">
+                            {lib.avatarUrl ? (
+                              // eslint-disable-next-line @next/next/no-img-element
+                              <img
+                                src={lib.avatarUrl}
+                                alt={lib.member.name}
+                                width={32}
+                                height={32}
+                                className="h-8 w-8 shrink-0 object-cover border border-bt-border"
+                              />
+                            ) : (
+                              <div className="flex h-8 w-8 shrink-0 items-center justify-center border border-bt-border bg-bt-surface font-mono text-xs font-bold text-bt-muted">
+                                {initials}
+                              </div>
+                            )}
+                            <div className="min-w-0">
+                              <div className="font-condensed text-sm font-bold uppercase tracking-wider text-white truncate">
+                                {lib.member.name}
+                              </div>
+                              <div className="font-mono text-[10px] text-bt-muted tabular-nums">
+                                {stats.gamesCount} games
+                              </div>
+                            </div>
+                          </div>
+                          <span className="font-mono text-xs font-bold tabular-nums text-emerald-400 shrink-0">
+                            {formatAbsMoney(stats.rawValue)}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : (
         <>
-          {/* 1-Year Cooldown Alert Banner */}
-          {simulation.removedSlotCooldown.isSlotUnlocked ? (
-            <div className="border-y border-r border-emerald-500/30 border-l-4 border-l-emerald-400 bg-emerald-500/10 px-5 py-4">
+          {/* Cooldown Alert Banner */}
+          {lockedRemovedMembers.length === 0 ? (
+            <div className="border-y border-r border-emerald-500/35 border-l-4 border-l-emerald-400 bg-emerald-500/10 px-5 py-4">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div className="flex items-start gap-3">
                   <ShieldCheck className="mt-0.5 h-5 w-5 shrink-0 text-emerald-400" />
                   <div>
-                    <div className="flex items-center gap-2">
-                      <span className="font-condensed text-xs font-bold uppercase tracking-[0.18em] text-emerald-300">
-                        Slot Unlocked — Immediate Swap Ready
-                      </span>
+                    <div className="font-condensed text-xs font-bold uppercase tracking-[0.18em] text-emerald-300">
+                      {simulation.removedMembers.length === 0
+                        ? "No Active Members Removed"
+                        : "Staged Slots Ready For Swap"}
                     </div>
-                    <p className="mt-1 text-sm text-white">
-                      <span className="font-semibold">
-                        {simulation.removedMemberName}&apos;s
-                      </span>{" "}
-                      slot is clear. Joined{" "}
-                      <span className="font-mono tabular-nums text-emerald-300">
-                        {simulation.removedSlotCooldown.joinDate ??
-                          "over 1 year ago"}
-                      </span>{" "}
-                      —{" "}
-                      <span className="font-semibold">
-                        {simulation.addedMemberName}
-                      </span>{" "}
-                      can take this slot immediately.
+                    <p className="mt-0.5 text-sm text-white">
+                      {simulation.removedMembers.length === 0
+                        ? "Drag or click cards below to stage one or multiple swaps."
+                        : "Every removed member has cleared the 1-year cooldown."}
                     </p>
                   </div>
                 </div>
@@ -683,33 +787,40 @@ export function SwapSimulator({
                     <div className="flex items-center gap-2">
                       <AlertTriangle className="h-3.5 w-3.5 text-bt-red" />
                       <span className="font-condensed text-xs font-bold uppercase tracking-[0.18em] text-amber-300">
-                        1-Year Slot Cooldown Active
+                        1-Year Slot Cooldown Active ({lockedRemovedMembers.length}{" "}
+                        {lockedRemovedMembers.length === 1 ? "Slot" : "Slots"})
                       </span>
                     </div>
-                    <p className="mt-1 text-sm text-white">
-                      <span className="font-semibold">
-                        {simulation.removedMemberName}
-                      </span>{" "}
-                      joined on{" "}
-                      <span className="font-mono tabular-nums text-amber-200">
-                        {simulation.removedSlotCooldown.joinDate}
-                      </span>
-                      . Leaving now locks this slot until{" "}
-                      <span className="font-mono font-bold tabular-nums text-amber-300">
-                        {simulation.removedSlotCooldown.slotUnlockDate}
-                      </span>{" "}
-                      (
-                      <span className="font-mono font-semibold tabular-nums text-bt-red">
-                        {simulation.removedSlotCooldown.daysUntilUnlock} days
-                        remaining
-                      </span>
-                      ).
-                    </p>
+                    <div className="mt-1 space-y-1 text-sm text-white">
+                      {lockedRemovedMembers.map((m) => (
+                        <p key={m.memberId}>
+                          <span className="font-semibold">{m.name}</span>{" "}
+                          (joined{" "}
+                          <span className="font-mono tabular-nums text-amber-200">
+                            {m.cooldown.joinDate}
+                          </span>
+                          ) locks slot until{" "}
+                          <span className="font-mono font-bold tabular-nums text-amber-300">
+                            {m.cooldown.slotUnlockDate}
+                          </span>{" "}
+                          (
+                          <span className="font-mono font-semibold tabular-nums text-bt-red">
+                            {m.cooldown.daysUntilUnlock}d remaining
+                          </span>
+                          ).
+                        </p>
+                      ))}
+                    </div>
                   </div>
                 </div>
                 <span className="p5-tag bg-bt-red px-3 py-1 font-mono text-xs font-bold uppercase tabular-nums text-white">
                   <span className="p5-unskew inline-block">
-                    {simulation.removedSlotCooldown.daysUntilUnlock}D LOCK
+                    {Math.max(
+                      ...lockedRemovedMembers.map(
+                        (m) => m.cooldown.daysUntilUnlock ?? 0
+                      )
+                    )}
+                    D MAX LOCK
                   </span>
                 </span>
               </div>
@@ -722,7 +833,7 @@ export function SwapSimulator({
               <div className="bg-bt-surface p-5">
                 <div className="flex items-center justify-between gap-2">
                   <span className="font-condensed text-xs font-bold uppercase tracking-[0.2em] text-bt-muted">
-                    Unique Catalog Delta
+                    Unique Catalog Net Change (Delta)
                   </span>
                   <span className="font-mono text-[11px] uppercase tabular-nums text-bt-muted">
                     {simulation.beforeUniqueGames} →{" "}
@@ -757,7 +868,7 @@ export function SwapSimulator({
               <div className="bg-bt-surface p-5">
                 <div className="flex items-center justify-between gap-2">
                   <span className="font-condensed text-xs font-bold uppercase tracking-[0.2em] text-bt-muted">
-                    Regional Value Delta
+                    Regional Value Net Change (Delta)
                   </span>
                   <span className="font-mono text-[11px] uppercase tabular-nums text-bt-muted">
                     {region.toUpperCase()} RAW PRICE
@@ -799,7 +910,7 @@ export function SwapSimulator({
                 </div>
                 <span className="inline-flex items-center gap-1.5 font-mono text-xs uppercase tracking-wider text-bt-muted">
                   <Clock className="h-3.5 w-3.5 text-bt-red" />
-                  Live simulation
+                  Live multi-swap simulation
                 </span>
               </div>
 
@@ -811,14 +922,15 @@ export function SwapSimulator({
                       <th className="px-4 py-2.5 text-right">Before</th>
                       <th className="px-2 py-2.5 text-center w-8"></th>
                       <th className="px-4 py-2.5 text-right">After</th>
-                      <th className="px-5 py-2.5 text-right">Delta</th>
+                      <th className="px-5 py-2.5 text-right">
+                        Net Change (Delta)
+                      </th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-bt-border/60 text-sm">
                     {simulation.shareDeltas.map((d) => {
-                      const isRemoved =
-                        d.memberId === simulation.removedMemberId;
-                      const isAdded = d.memberId === simulation.addedMemberId;
+                      const isRemoved = removedIdSet.has(d.memberId);
+                      const isAdded = addedIdSet.has(d.memberId);
                       return (
                         <tr
                           key={d.memberId}
@@ -886,26 +998,24 @@ export function SwapSimulator({
               </div>
             </div>
           </div>
+
+          {/* Side-by-Side IN THE FAMILY (Left) & WAITLIST (Right) Drag-and-Drop Cards */}
+          <div className="grid grid-cols-1 xl:grid-cols-2 gap-5">
+            {renderRosterColumn(
+              "active",
+              displayedActive,
+              `IN THE FAMILY · ${displayedActive.length} / 6`,
+              "OPEN FAMILY SLOT"
+            )}
+            {renderRosterColumn(
+              "waitlist",
+              displayedWaitlist,
+              `WAITLIST · ${displayedWaitlist.length} / 6`,
+              "OPEN WAITLIST"
+            )}
+          </div>
         </>
       )}
-
-      {/* Side-by-Side IN THE FAMILY (Left) & WAITLIST (Right) Drag-and-Drop Cards */}
-      <div className="grid grid-cols-1 xl:grid-cols-2 gap-5">
-        {renderRosterColumn(
-          "active",
-          displayedActive,
-          `IN THE FAMILY · ${activeLibraries.length} / 6`,
-          "OPEN FAMILY SLOT",
-          stagedOutId
-        )}
-        {renderRosterColumn(
-          "waitlist",
-          displayedWaitlist,
-          `WAITLIST · ${displayedWaitlist.length} / 6`,
-          "OPEN WAITLIST",
-          stagedInId
-        )}
-      </div>
     </div>
   );
 }
