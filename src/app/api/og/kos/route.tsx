@@ -94,7 +94,15 @@ export async function GET(request: NextRequest) {
                 color: "#FFFFFF",
               }}
             >
-              <span>◎ KILL ON SIGHT // UP NEXT TO BUY</span>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+                <circle cx="12" cy="12" r="8" stroke="#FFFFFF" strokeWidth="2.4" />
+                <circle cx="12" cy="12" r="2.5" fill="#FFFFFF" />
+                <line x1="12" y1="1" x2="12" y2="5" stroke="#FFFFFF" strokeWidth="2.4" />
+                <line x1="12" y1="19" x2="12" y2="23" stroke="#FFFFFF" strokeWidth="2.4" />
+                <line x1="1" y1="12" x2="5" y2="12" stroke="#FFFFFF" strokeWidth="2.4" />
+                <line x1="19" y1="12" x2="23" y2="12" stroke="#FFFFFF" strokeWidth="2.4" />
+              </svg>
+              <span>KILL ON SIGHT // UP NEXT TO BUY</span>
             </div>
           </div>
 
