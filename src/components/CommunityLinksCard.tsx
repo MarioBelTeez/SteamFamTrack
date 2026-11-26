@@ -8,7 +8,8 @@ const GITHUB_REPO_URL = "https://github.com/MarioBelTeez/SteamFamTrack";
 const DISCORD_SERVER_URL =
   process.env.NEXT_PUBLIC_DISCORD_SERVER_URL?.trim() || "";
 const STEAM_GROUP_URL =
-  process.env.NEXT_PUBLIC_STEAM_GROUP_URL?.trim() || "";
+  process.env.NEXT_PUBLIC_STEAM_GROUP_URL?.trim() ||
+  "https://steamcommunity.com/groups/belteezstudio";
 
 function DiscordIcon({ className }: { className?: string }) {
   return (
