@@ -79,7 +79,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html
       lang="en"
-      data-theme="belteez-crimson"
+      data-theme="steam-blue"
       data-theme-mode="dark"
       data-theme-on-accent="light"
       suppressHydrationWarning

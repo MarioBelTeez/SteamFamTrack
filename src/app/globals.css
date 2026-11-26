@@ -1,20 +1,6 @@
 @import "tailwindcss";
 
 :root,
-:root[data-theme="belteez-crimson"] {
-  --bt-red: #E8002D;
-  --bt-red-hover: #FF1A45;
-  --bt-accent-rgb: 232 0 45;
-  --bt-on-accent: #FFFFFF;
-  --bt-bg: #08060A;
-  --bt-surface: #110C0F;
-  --bt-elevated: #181116;
-  --bt-border: #2a1f24;
-  --bt-muted: #9e8d94;
-  --bt-dim: #6B5B62;
-  --bt-ink: #FFFFFF;
-}
-
 :root[data-theme="steam-blue"] {
   --bt-red: #1A9FFF;
   --bt-red-hover: #47B5FF;
@@ -27,6 +13,20 @@
   --bt-muted: #93A7BC;
   --bt-dim: #62778D;
   --bt-ink: #F3F8FC;
+}
+
+:root[data-theme="belteez-crimson"] {
+  --bt-red: #E8002D;
+  --bt-red-hover: #FF1A45;
+  --bt-accent-rgb: 232 0 45;
+  --bt-on-accent: #FFFFFF;
+  --bt-bg: #08060A;
+  --bt-surface: #110C0F;
+  --bt-elevated: #181116;
+  --bt-border: #2a1f24;
+  --bt-muted: #9e8d94;
+  --bt-dim: #6B5B62;
+  --bt-ink: #FFFFFF;
 }
 
 :root[data-theme="midnight-blurple"] {

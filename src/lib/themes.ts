@@ -33,7 +33,7 @@ export interface AppTheme {
 }
 
 export const THEME_STORAGE_KEY = "sft_theme_v1";
-export const DEFAULT_THEME_ID: ThemeId = "belteez-crimson";
+export const DEFAULT_THEME_ID: ThemeId = "steam-blue";
 
 export const APP_THEMES: readonly AppTheme[] = [
   {
