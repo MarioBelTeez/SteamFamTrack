@@ -120,6 +120,12 @@ discord-bot/                         # Standalone discord.js v14 bot
 
 ---
 
+## Disclaimer
+
+SteamFamTrack is an independent, open-source community tool and is **not affiliated with, endorsed by, or sponsored by Valve Corporation**. Steam and the Steam logo are trademarks and/or registered trademarks of Valve Corporation in the U.S. and/or other countries. Game data, pricing, and imagery are provided on an "as-is" basis via the Steam Web API.
+
+---
+
 ## License
 
 Copyright (C) 2026 BelTeez Studio ([MarioBelTeez](https://github.com/MarioBelTeez))

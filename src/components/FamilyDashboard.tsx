@@ -23,6 +23,7 @@ import { MonthlyHistory } from "@/components/MonthlyHistory";
 import { OverlapAndCatalog } from "@/components/OverlapAndCatalog";
 import { RegionSelect } from "@/components/RegionSelect";
 import { SaveFamilyModal } from "@/components/SaveFamilyModal";
+import { SiteFooter } from "@/components/SiteFooter";
 import { SwapSimulator } from "@/components/SwapSimulator";
 import {
   HeaderThemeSwitcher,
@@ -1541,6 +1542,8 @@ export function FamilyDashboard({
           </div>
         )}
       </main>
+
+      <SiteFooter />
 
       <MemberEditorModal
         key={`${editorOpen}-${members.length}-${waitlist.length}`}

@@ -2,11 +2,12 @@
 
 import { useMemo, useState } from "react";
 import {
+  MONTH_KEY_REGEX,
+  WEEK_KEY_REGEX,
   computeMemberStreaks,
   filterSnapshotsByMode,
   getIsoWeekKey,
   getMonthKey,
-  isValidSnapshotPeriod,
   SnapshotPeriodMode,
 } from "@/lib/snapshot-periods";
 import {
@@ -54,7 +55,10 @@ export function MonthlyHistory({
     [mode]
   );
   const periodKey = customPeriodKey ?? defaultPeriodKey;
-  const isValidPeriod = isValidSnapshotPeriod(periodKey);
+  const isValidPeriod =
+    mode === "weekly"
+      ? WEEK_KEY_REGEX.test(periodKey.trim())
+      : MONTH_KEY_REGEX.test(periodKey.trim());
   const unitLabel = mode === "weekly" ? "W" : "M";
 
   const modeSnapshots = useMemo(
@@ -170,7 +174,10 @@ export function MonthlyHistory({
       <div className="p5-frame bg-bt-border">
         <div className="bg-bt-surface p-5 flex flex-wrap items-center justify-between gap-4">
           <div className="flex items-start gap-3">
-            <span className="tier-rail mt-0.5 h-10 w-1 shrink-0 bg-bt-red" />
+            <span
+              aria-hidden="true"
+              className="mt-0.5 h-10 w-1 shrink-0 bg-bt-red"
+            />
             <div>
               <div className="flex flex-wrap items-center gap-2.5">
                 <h2 className="font-display text-2xl tracking-wider uppercase text-white leading-none">
@@ -414,14 +421,22 @@ export function MonthlyHistory({
                 <div className="bg-bt-surface overflow-hidden">
                   <div className="flex flex-wrap items-center justify-between gap-3 border-b border-bt-border px-5 py-4">
                     <div className="flex items-center gap-2.5">
-                      <span className="tier-rail h-5 w-1 bg-bt-red" />
+                      <span aria-hidden="true" className="h-5 w-1 bg-bt-red" />
                       <h3 className="font-display text-xl tracking-wider uppercase text-white leading-none">
                         Member Deltas &amp; Streaks ({diff.prevPeriod} →{" "}
                         {diff.latestPeriod})
                       </h3>
                     </div>
-                    <span className="font-mono text-[10px] uppercase tracking-widest text-bt-muted">
-                      🔥 BUY STREAK · 🧊 DRY SPELL
+                    <span className="inline-flex items-center gap-2 font-mono text-[10px] uppercase tracking-widest text-bt-muted">
+                      <span className="inline-flex items-center gap-1 text-amber-300">
+                        <Flame className="h-3 w-3" aria-hidden="true" />
+                        BUY STREAK
+                      </span>
+                      <span className="text-bt-dim">·</span>
+                      <span className="inline-flex items-center gap-1 text-cyan-300">
+                        <Snowflake className="h-3 w-3" aria-hidden="true" />
+                        DRY SPELL
+                      </span>
                     </span>
                   </div>
 
@@ -533,7 +548,7 @@ export function MonthlyHistory({
             <div className="bg-bt-surface p-5 space-y-4">
               <div className="flex flex-wrap items-center justify-between gap-2 border-b border-bt-border pb-3">
                 <div className="flex items-center gap-2.5">
-                  <span className="tier-rail h-5 w-1 bg-bt-red" />
+                  <span aria-hidden="true" className="h-5 w-1 bg-bt-red" />
                   <h3 className="font-display text-xl tracking-wider uppercase text-white leading-none">
                     Saved {mode === "weekly" ? "Weekly" : "Monthly"} Checkpoints
                     ({modeSnapshots.length})

@@ -330,6 +330,11 @@ body {
   color: #0369A1;
 }
 
+:root[data-theme-mode="light"] .text-cyan-300,
+:root[data-theme-mode="light"] .text-cyan-400 {
+  color: #0E7490;
+}
+
 :root[data-theme-mode="light"] .text-red-200 {
   color: #B91C1C;
 }

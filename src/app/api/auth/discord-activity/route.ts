@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 import {
   STEAM_SESSION_COOKIE,
   buildSteamSessionCookieOptions,
@@ -10,6 +11,7 @@ import {
 import { getSteamFamDb } from "@/lib/supabase";
 
 const DEFAULT_DISCORD_CLIENT_ID = "1575252351776989296";
+const DISCORD_API_TIMEOUT_MS = 10_000;
 
 interface DiscordTokenResponse {
   access_token?: string;
@@ -25,14 +27,30 @@ interface DiscordUserResponse {
 }
 
 export async function POST(req: NextRequest) {
+  const ip = getClientIp(req.headers);
+  const limit = checkRateLimit(`discord-activity-auth:${ip}`, 20, 60_000);
+  if (!limit.allowed) {
+    return NextResponse.json(
+      { error: "Too many sign-in attempts. Please wait a moment." },
+      { status: 429 }
+    );
+  }
+
   let body: { code?: unknown };
   try {
-    body = (await req.json()) as { code?: unknown };
+    const parsed = await req.json();
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return NextResponse.json(
+        { error: "Invalid request payload." },
+        { status: 400 }
+      );
+    }
+    body = parsed as { code?: unknown };
   } catch {
     return NextResponse.json({ error: "Invalid JSON body." }, { status: 400 });
   }
 
-  const code = typeof body.code === "string" ? body.code.trim() : "";
+  const code = typeof body.code === "string" ? body.code.trim().slice(0, 256) : "";
   if (!code) {
     return NextResponse.json(
       { error: "Missing Discord authorization code." },
@@ -63,20 +81,28 @@ export async function POST(req: NextRequest) {
     code,
   });
 
-  const tokenRes = await fetch("https://discord.com/api/oauth2/token", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/x-www-form-urlencoded",
-    },
-    body: tokenParams.toString(),
-    cache: "no-store",
-  });
+  let tokenRes: Response;
+  try {
+    tokenRes = await fetch("https://discord.com/api/oauth2/token", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      body: tokenParams.toString(),
+      cache: "no-store",
+      signal: AbortSignal.timeout(DISCORD_API_TIMEOUT_MS),
+    });
+  } catch {
+    return NextResponse.json(
+      { error: "Discord authentication timed out. Please retry." },
+      { status: 504 }
+    );
+  }
 
   if (!tokenRes.ok) {
-    const errText = await tokenRes.text().catch(() => "");
     return NextResponse.json(
       {
-        error: `Discord token exchange failed (${tokenRes.status}). ${errText}`.trim(),
+        error: `Discord token exchange failed (${tokenRes.status}). Please re-open the Activity and try again.`,
       },
       { status: 401 }
     );
@@ -90,12 +116,21 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const meRes = await fetch("https://discord.com/api/users/@me", {
-    headers: {
-      Authorization: `Bearer ${tokenData.access_token}`,
-    },
-    cache: "no-store",
-  });
+  let meRes: Response;
+  try {
+    meRes = await fetch("https://discord.com/api/users/@me", {
+      headers: {
+        Authorization: `Bearer ${tokenData.access_token}`,
+      },
+      cache: "no-store",
+      signal: AbortSignal.timeout(DISCORD_API_TIMEOUT_MS),
+    });
+  } catch {
+    return NextResponse.json(
+      { error: "Discord profile lookup timed out. Please retry." },
+      { status: 504 }
+    );
+  }
 
   if (!meRes.ok) {
     return NextResponse.json(
