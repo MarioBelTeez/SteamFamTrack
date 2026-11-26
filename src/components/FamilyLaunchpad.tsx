@@ -2,6 +2,7 @@
 
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { CommunityLinksCard } from "@/components/CommunityLinksCard";
+import { STEAM_FAMILY_FAQ } from "@/lib/seo-faq";
 import { RegionSelect } from "@/components/RegionSelect";
 import {
   FamilyMemberInput,
@@ -1882,6 +1883,40 @@ export function FamilyLaunchpad({
               </button>
             </div>
           </div>
+        </div>
+      </div>
+
+      {/* Below-the-fold Steam Families FAQ (semantic & crawlable for SEO) */}
+      <div className="mt-12 border-t border-bt-border/80 pt-8">
+        <div className="flex flex-wrap items-baseline justify-between gap-2 mb-5">
+          <div>
+            <span className="font-mono text-[10px] uppercase tracking-[0.2em] text-bt-red">
+              STEAM FAMILIES // GUIDE &amp; FAQ
+            </span>
+            <h2 className="mt-1 font-display text-2xl sm:text-3xl tracking-wider uppercase text-white">
+              HOW STEAM FAMILY TRACKING WORKS
+            </h2>
+          </div>
+          <span className="font-mono text-[11px] text-bt-muted">
+            Category 62 share checks · 1-year cooldowns · Open-source AGPL-3.0
+          </span>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          {STEAM_FAMILY_FAQ.map((item) => (
+            <details
+              key={item.question}
+              className="group border border-bt-border bg-bt-surface/85 px-4 py-3 open:border-bt-red/60 transition-colors"
+            >
+              <summary className="cursor-pointer list-none flex items-center justify-between gap-3 font-condensed text-sm font-bold uppercase tracking-wider text-white">
+                <span>{item.question}</span>
+                <ChevronDown className="h-4 w-4 shrink-0 text-bt-red transition-transform group-open:rotate-180" />
+              </summary>
+              <p className="mt-2.5 border-t border-bt-border/60 pt-2.5 text-xs leading-relaxed text-bt-muted">
+                {item.answer}
+              </p>
+            </details>
+          ))}
         </div>
       </div>
     </section>

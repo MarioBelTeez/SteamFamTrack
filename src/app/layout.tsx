@@ -7,6 +7,7 @@ import {
 } from "next/font/google";
 import "./globals.css";
 import { buildThemeInitScript } from "@/lib/themes";
+import { buildStructuredDataJsonLd } from "@/lib/seo-faq";
 
 const bebasNeue = Bebas_Neue({
   weight: "400",
@@ -34,9 +35,10 @@ const inter = Inter({
 const siteUrl =
   process.env.NEXT_PUBLIC_SITE_URL || "https://steamft.com";
 
-const siteTitle = "SteamFamTrack — Steam Family Contribution & Swap Analyzer";
+const siteTitle =
+  "SteamFamTrack — Steam Family Tracker, Share Checker & Library Analyzer";
 const siteDescription =
-  "Track Steam Family game contributions, regional value shares, library overlaps, 1-year slot cooldowns, and waitlist swap simulations.";
+  "Free Steam Family tracker & share checker. Compare Steam Family game contributions, library overlap, regional value shares, Category 62 eligibility, 1-year slot cooldowns, and Discord bot stats.";
 
 export const metadata: Metadata = {
   metadataBase: new URL(siteUrl),
@@ -46,10 +48,14 @@ export const metadata: Metadata = {
   },
   description: siteDescription,
   keywords: [
-    "Steam Family Sharing",
+    "Steam Family tracking",
     "Steam Family tracker",
+    "Steam Family Sharing",
+    "Steam Family Share checker",
     "Steam library overlap",
-    "Steam slot cooldown",
+    "Steam Family contribution tracker",
+    "Steam slot cooldown calculator",
+    "Steam Family Discord bot",
     "waitlist swap simulator",
   ],
   alternates: {
@@ -82,6 +88,12 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       <head>
         <script
           dangerouslySetInnerHTML={{ __html: buildThemeInitScript() }}
+        />
+        <script
+          type="application/ld+json"
+          dangerouslySetInnerHTML={{
+            __html: JSON.stringify(buildStructuredDataJsonLd(siteUrl)),
+          }}
         />
       </head>
       <body className="min-h-full flex flex-col bg-bt-bg text-bt-ink antialiased selection:bg-bt-red selection:text-bt-on-accent">
