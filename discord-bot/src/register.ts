@@ -26,12 +26,20 @@ async function registerCommands(): Promise<void> {
     console.log("Guild slash commands registered.");
   } else {
     console.log(
-      `Registering ${commandsJson.length} global slash commands (may take up to 1 hour to propagate)...`
+      `Registering ${commandsJson.length} global slash commands (preserving Discord Activity Entry Point if present)...`
     );
+    const existing = (await rest.get(
+      Routes.applicationCommands(clientId)
+    )) as Array<{ type?: number } & Record<string, unknown>>;
+    const entryPoints = Array.isArray(existing)
+      ? existing.filter((cmd) => cmd.type === 4)
+      : [];
     await rest.put(Routes.applicationCommands(clientId), {
-      body: commandsJson,
+      body: [...commandsJson, ...entryPoints],
     });
-    console.log("Global slash commands registered.");
+    console.log(
+      `Global slash commands registered (${commandsJson.length} commands + ${entryPoints.length} entry point).`
+    );
   }
 }
 
