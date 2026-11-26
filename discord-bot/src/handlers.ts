@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
 import {
   ActionRowBuilder,
+  AttachmentBuilder,
   ButtonBuilder,
   ButtonStyle,
   ChatInputCommandInteraction,
@@ -375,6 +376,11 @@ export async function handleInteraction(
 
   if (interaction.commandName === "check") {
     await handleCheck(interaction);
+    return;
+  }
+
+  if (interaction.commandName === "kos") {
+    await handleKos(interaction);
     return;
   }
 
@@ -884,5 +890,91 @@ async function handleCheck(
     .setFooter({ text: `AppID ${game.appid} · SteamFamTrack` })
     .setTimestamp();
 
+  await interaction.editReply({ embeds: [embed] });
+}
+
+async function handleKos(
+  interaction: ChatInputCommandInteraction
+): Promise<void> {
+  await interaction.deferReply();
+
+  const familyFilter = interaction.options.getString("family", false);
+  const familyOrMsg = await resolveFamilyForDiscordUser(
+    interaction.user.id,
+    familyFilter
+  );
+
+  if (typeof familyOrMsg === "string") {
+    await interaction.editReply({ content: familyOrMsg });
+    return;
+  }
+
+  const family = familyOrMsg;
+  const analyzed = await runAnalyze(family);
+  const members = analyzed.analysis.members;
+
+  if (!members || members.length === 0) {
+    await interaction.editReply({
+      content: `No active members found in **${family.name}**.`,
+    });
+    return;
+  }
+
+  const sym = analyzed.analysis.currencySymbol || "$";
+  const totalValue = members.reduce((sum, m) => sum + m.totalRawValue, 0);
+  const groupAvg = totalValue / members.length;
+  const equalTargetPct = 100 / members.length;
+
+  // Target = lowest contributor by raw value (tie-break: lowest game count)
+  const target = [...members].sort(
+    (a, b) => a.totalRawValue - b.totalRawValue || a.totalGames - b.totalGames
+  )[0];
+
+  const deltaVsAvg = target.totalRawValue - groupAvg;
+  const displayName = target.personaName || target.name;
+  const deltaStr = formatSignedMoney(deltaVsAvg, sym);
+  const shareStr = `${target.sharePercent.toFixed(1)}%`;
+  const targetPctStr = `${equalTargetPct.toFixed(1)}%`;
+  const avgStr = formatMoney(groupAvg, sym);
+
+  const ogUrl = new URL(`${getApiBaseUrl()}/api/og/kos`);
+  ogUrl.searchParams.set("name", displayName);
+  ogUrl.searchParams.set("delta", deltaStr);
+  ogUrl.searchParams.set("share", shareStr);
+  ogUrl.searchParams.set("target", targetPctStr);
+  ogUrl.searchParams.set("avg", avgStr);
+  ogUrl.searchParams.set("family", family.name);
+  if (target.avatarUrl) {
+    ogUrl.searchParams.set("avatar", target.avatarUrl);
+  }
+
+  const embed = new EmbedBuilder()
+    .setColor(EMBED_COLOR)
+    .setTitle(`🎯 KILL ON SIGHT // ${displayName.toUpperCase()}`)
+    .setDescription(
+      `**${displayName}** is **${deltaStr} vs. group average** (${shareStr} of ${targetPctStr} target) in **${family.name}**.\nTime to open the wallet.`
+    )
+    .setFooter({ text: `steamft.com · ${family.name}` })
+    .setTimestamp();
+
+  try {
+    const imgRes = await fetch(ogUrl.toString(), {
+      signal: AbortSignal.timeout(12000),
+    });
+    if (imgRes.ok) {
+      const buf = Buffer.from(await imgRes.arrayBuffer());
+      const attachment = new AttachmentBuilder(buf, { name: "kos-target.png" });
+      embed.setImage("attachment://kos-target.png");
+      await interaction.editReply({ embeds: [embed], files: [attachment] });
+      return;
+    }
+  } catch (err) {
+    console.error("Failed to fetch /api/og/kos image:", err);
+  }
+
+  // Fallback if image render is transiently unavailable
+  if (target.avatarUrl) {
+    embed.setThumbnail(target.avatarUrl);
+  }
   await interaction.editReply({ embeds: [embed] });
 }

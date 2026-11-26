@@ -105,6 +105,20 @@ export const commands = [
         .setDescription("Optional family name (auto-detects your linked Steam Family if omitted)")
         .setRequired(false)
     ),
+
+  new SlashCommandBuilder()
+    .setName("kos")
+    .setDescription(
+      "Kill On Sight — lock onto the lowest contributor in your Steam Family who is up next to buy"
+    )
+    .setIntegrationTypes(integrationTypes)
+    .setContexts(contexts)
+    .addStringOption((opt) =>
+      opt
+        .setName("family")
+        .setDescription("Optional family name (auto-detects your linked Steam Family if omitted)")
+        .setRequired(false)
+    ),
 ];
 
 export const commandsJson = commands.map((cmd) => cmd.toJSON());
