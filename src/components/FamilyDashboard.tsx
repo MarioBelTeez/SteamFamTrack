@@ -8,6 +8,7 @@ import {
   authorizeDiscordActivity,
   isDiscordActivityEnvironment,
   openExternalUrl,
+  patchDiscordActivityUrls,
 } from "@/lib/discord-activity";
 import { ContributionBoard } from "@/components/ContributionBoard";
 import { FamilyLeaderboard } from "@/components/FamilyLeaderboard";
@@ -317,6 +318,7 @@ export function FamilyDashboard({
     let cancelled = false;
     const inDiscord = isDiscordActivityEnvironment();
     if (inDiscord) {
+      void patchDiscordActivityUrls();
       queueMicrotask(() => {
         if (!cancelled) setIsDiscordActivity(true);
       });

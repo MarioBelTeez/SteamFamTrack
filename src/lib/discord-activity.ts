@@ -26,10 +26,35 @@ export function isDiscordActivityEnvironment(): boolean {
 }
 
 let cachedSdkPromise: Promise<DiscordSDK> | null = null;
+let urlMappingsPatched = false;
+
+export const STEAM_CDN_URL_MAPPINGS = [
+  { prefix: "/steam-avatars", target: "avatars.steamstatic.com" },
+  { prefix: "/steam-fastly", target: "shared.fastly.steamstatic.com" },
+  { prefix: "/steam-akamai", target: "cdn.akamai.steamstatic.com" },
+  { prefix: "/steam-store", target: "store.akamai.steamstatic.com" },
+];
+
+export async function patchDiscordActivityUrls(): Promise<void> {
+  if (urlMappingsPatched || !isDiscordActivityEnvironment()) return;
+  urlMappingsPatched = true;
+  try {
+    const { patchUrlMappings } = await import("@discord/embedded-app-sdk");
+    patchUrlMappings(STEAM_CDN_URL_MAPPINGS, {
+      patchSrcAttributes: true,
+      patchFetch: false,
+      patchWebSocket: false,
+      patchXhr: false,
+    });
+  } catch {
+    urlMappingsPatched = false;
+  }
+}
 
 export async function getDiscordSdk(): Promise<DiscordSDK> {
   if (!cachedSdkPromise) {
     cachedSdkPromise = (async () => {
+      await patchDiscordActivityUrls();
       const { DiscordSDK: SdkClass } = await import(
         "@discord/embedded-app-sdk"
       );
