@@ -10,6 +10,7 @@
     "test": "node --experimental-strip-types --test src/lib/analyzer.test.ts src/lib/steam.test.ts src/lib/steam-auth.test.ts src/lib/steam-check.test.ts"
   },
   "dependencies": {
+    "@discord/embedded-app-sdk": "^2.5.0",
     "@supabase/supabase-js": "^2.119.2",
     "lucide-react": "^1.79.0",
     "next": "16.4.6",
