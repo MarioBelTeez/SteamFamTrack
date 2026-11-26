@@ -170,38 +170,36 @@ export async function GET(request: NextRequest) {
           </div>
         </div>
 
-        {/* Right: Crisp BelTeez [ B ] Brand Emblem */}
-        <svg
-          width="116"
-          height="116"
-          viewBox="0 0 600 600"
-          style={{ position: "relative" }}
+        {/* Right: Crisp BelTeez [ B ] Brand Emblem (Satori-native flex box) */}
+        <div
+          style={{
+            width: "116px",
+            height: "116px",
+            backgroundColor: "#050406",
+            border: "5px solid #FFFFFF",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            position: "relative",
+          }}
         >
-          <rect x="11" y="11" width="578" height="578" fill="#050406" stroke="#FFFFFF" strokeWidth="22" />
-          <rect x="64" y="64" width="44" height="472" fill="#E8002D" />
-          <rect x="492" y="64" width="44" height="472" fill="#E8002D" />
-          <rect x="64" y="64" width="68" height="44" fill="#E8002D" />
-          <rect x="166" y="64" width="62" height="44" fill="#E8002D" />
-          <rect x="269" y="64" width="62" height="44" fill="#E8002D" />
-          <rect x="372" y="64" width="62" height="44" fill="#E8002D" />
-          <rect x="468" y="64" width="68" height="44" fill="#E8002D" />
-          <rect x="64" y="492" width="68" height="44" fill="#E8002D" />
-          <rect x="166" y="492" width="62" height="44" fill="#E8002D" />
-          <rect x="269" y="492" width="62" height="44" fill="#E8002D" />
-          <rect x="372" y="492" width="62" height="44" fill="#E8002D" />
-          <rect x="468" y="492" width="68" height="44" fill="#E8002D" />
-          <text
-            x="300"
-            y="404"
-            textAnchor="middle"
-            fill="#E8002D"
-            fontFamily="sans-serif"
-            fontWeight="900"
-            fontSize="310"
+          <div
+            style={{
+              width: "84px",
+              height: "84px",
+              border: "7px solid #E8002D",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              fontSize: "54px",
+              fontWeight: 900,
+              color: "#E8002D",
+              lineHeight: 1,
+            }}
           >
             B
-          </text>
-        </svg>
+          </div>
+        </div>
       </div>
     ),
     {
