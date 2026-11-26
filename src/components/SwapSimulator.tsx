@@ -2,7 +2,11 @@
 
 import { useMemo, useState } from "react";
 import type { DragEvent, KeyboardEvent } from "react";
-import { computeSlotCooldown, simulateSwap } from "@/lib/analyzer";
+import {
+  computeSlotCooldown,
+  findBestSwapPair,
+  simulateSwap,
+} from "@/lib/analyzer";
 import { MemberLibrary, SteamRegion, STEAM_REGIONS } from "@/lib/types";
 import {
   AlertTriangle,
@@ -85,39 +89,11 @@ export function SwapSimulator({
   }, [activeLibraries]);
 
   const bestDefaultPair = useMemo(() => {
-    let best: {
-      removeId: string;
-      addId: string;
-      uniqueValueDelta: number;
-      uniqueGamesDelta: number;
-    } | null = null;
-
-    for (const activeLib of activeLibraries) {
-      for (const waitlistLib of waitlistLibraries) {
-        const result = simulateSwap(
-          activeLibraries,
-          activeLib.member.id,
-          waitlistLib,
-          region,
-          includeExcluded
-        );
-        if (!result) continue;
-
-        if (
-          !best ||
-          result.uniqueValueDelta > best.uniqueValueDelta ||
-          (result.uniqueValueDelta === best.uniqueValueDelta &&
-            result.uniqueGamesDelta > best.uniqueGamesDelta)
-        ) {
-          best = {
-            removeId: activeLib.member.id,
-            addId: waitlistLib.member.id,
-            uniqueValueDelta: result.uniqueValueDelta,
-            uniqueGamesDelta: result.uniqueGamesDelta,
-          };
-        }
-      }
-    }
+    const best = findBestSwapPair(
+      activeLibraries,
+      waitlistLibraries,
+      includeExcluded
+    );
 
     return {
       removeId:
@@ -126,7 +102,7 @@ export function SwapSimulator({
         "",
       addId: best?.addId ?? waitlistLibraries[0]?.member.id ?? "",
     };
-  }, [activeLibraries, waitlistLibraries, region, includeExcluded]);
+  }, [activeLibraries, waitlistLibraries, includeExcluded]);
 
   const resolvedRemoveId = useMemo(() => {
     if (removeId && activeLibraries.some((l) => l.member.id === removeId)) {
@@ -197,7 +173,7 @@ export function SwapSimulator({
     ]
   );
 
-  if (displayedWaitlist.length === 0) {
+  if (displayedWaitlist.length === 0 || displayedActive.length === 0) {
     return (
       <div className="p5-frame bg-bt-border">
         <div className="bg-bt-surface p-10 text-center">
@@ -235,6 +211,7 @@ export function SwapSimulator({
     setDragSource(payload);
     setDragOverTarget(null);
     e.dataTransfer.effectAllowed = "move";
+    e.dataTransfer.setData("text/plain", id);
     e.dataTransfer.setData("application/json", JSON.stringify(payload));
   };
 
@@ -338,7 +315,8 @@ export function SwapSimulator({
           <div className="flex flex-wrap items-center justify-between gap-2 border-b border-bt-border pb-3">
             <div className="flex items-center gap-2.5">
               <span
-                className={`tier-rail h-5 w-1 ${
+                aria-hidden="true"
+                className={`h-5 w-1 ${
                   isActiveSide ? "bg-bt-red" : "bg-emerald-500"
                 }`}
               />
@@ -521,7 +499,7 @@ export function SwapSimulator({
         <div className="bg-bt-surface p-5 sm:p-6">
           <div className="mb-5 flex flex-wrap items-center justify-between gap-3 border-b border-bt-border pb-4">
             <div className="flex items-center gap-3">
-              <span className="tier-rail h-6 w-1 bg-bt-red" />
+              <span aria-hidden="true" className="h-6 w-1 bg-bt-red" />
               <div>
                 <h2 className="font-display text-2xl tracking-wider uppercase text-white leading-none">
                   Swap &amp; Cooldown Simulator
@@ -568,11 +546,16 @@ export function SwapSimulator({
                   onChange={(e) => setRemoveId(e.target.value)}
                   className="w-full cursor-pointer border border-bt-border bg-bt-bg px-3 py-2.5 font-mono text-sm text-white focus:border-bt-red focus:outline-none"
                 >
-                  {activeLibraries.map((lib) => (
-                    <option key={lib.member.id} value={lib.member.id}>
-                      {lib.member.name} ({lib.games.length} games)
-                    </option>
-                  ))}
+                  {activeLibraries.map((lib) => {
+                    const count =
+                      libraryStats.get(lib.member.id)?.gamesCount ??
+                      lib.games.length;
+                    return (
+                      <option key={lib.member.id} value={lib.member.id}>
+                        {lib.member.name} ({count} games)
+                      </option>
+                    );
+                  })}
                 </select>
 
                 {outStats && (
@@ -592,7 +575,7 @@ export function SwapSimulator({
             <div className="flex justify-center">
               <div
                 aria-hidden="true"
-                className="p5-frame-sm bg-bt-red shadow-[0_0_24px_rgba(232,0,45,0.4)]"
+                className="p5-frame-sm bg-bt-red shadow-[0_0_24px_rgb(var(--bt-accent-rgb)/0.4)]"
               >
                 <div className="flex h-12 w-12 items-center justify-center bg-bt-red text-white">
                   <ArrowRightLeft className="h-5 w-5" />
@@ -626,11 +609,16 @@ export function SwapSimulator({
                   onChange={(e) => setAddId(e.target.value)}
                   className="w-full cursor-pointer border border-bt-border bg-bt-bg px-3 py-2.5 font-mono text-sm text-white focus:border-bt-red focus:outline-none"
                 >
-                  {waitlistLibraries.map((lib) => (
-                    <option key={lib.member.id} value={lib.member.id}>
-                      {lib.member.name} ({lib.games.length} games)
-                    </option>
-                  ))}
+                  {waitlistLibraries.map((lib) => {
+                    const count =
+                      libraryStats.get(lib.member.id)?.gamesCount ??
+                      lib.games.length;
+                    return (
+                      <option key={lib.member.id} value={lib.member.id}>
+                        {lib.member.name} ({count} games)
+                      </option>
+                    );
+                  })}
                 </select>
 
                 {inStats && (
@@ -804,7 +792,7 @@ export function SwapSimulator({
             <div className="bg-bt-surface overflow-hidden">
               <div className="flex flex-wrap items-center justify-between gap-3 border-b border-bt-border px-5 py-4">
                 <div className="flex items-center gap-2.5">
-                  <span className="tier-rail h-5 w-1 bg-bt-red" />
+                  <span aria-hidden="true" className="h-5 w-1 bg-bt-red" />
                   <h3 className="font-display text-xl tracking-wider uppercase text-white leading-none">
                     Contribution % Share Shift
                   </h3>

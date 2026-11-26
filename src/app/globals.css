@@ -1,25 +1,129 @@
 @import "tailwindcss";
 
-:root {
+:root,
+:root[data-theme="belteez-crimson"] {
   --bt-red: #E8002D;
   --bt-red-hover: #FF1A45;
+  --bt-accent-rgb: 232 0 45;
+  --bt-on-accent: #FFFFFF;
   --bt-bg: #08060A;
   --bt-surface: #110C0F;
   --bt-elevated: #181116;
   --bt-border: #2a1f24;
   --bt-muted: #9e8d94;
   --bt-dim: #6B5B62;
+  --bt-ink: #FFFFFF;
+}
+
+:root[data-theme="steam-blue"] {
+  --bt-red: #1A9FFF;
+  --bt-red-hover: #47B5FF;
+  --bt-accent-rgb: 26 159 255;
+  --bt-on-accent: #FFFFFF;
+  --bt-bg: #0D131A;
+  --bt-surface: #151F2B;
+  --bt-elevated: #1C2A3B;
+  --bt-border: #2A3E54;
+  --bt-muted: #93A7BC;
+  --bt-dim: #62778D;
+  --bt-ink: #F3F8FC;
+}
+
+:root[data-theme="midnight-blurple"] {
+  --bt-red: #7C6BFF;
+  --bt-red-hover: #9485FF;
+  --bt-accent-rgb: 124 107 255;
+  --bt-on-accent: #FFFFFF;
+  --bt-bg: #0C0D14;
+  --bt-surface: #131521;
+  --bt-elevated: #1B1E30;
+  --bt-border: #2C314A;
+  --bt-muted: #9AA0BC;
+  --bt-dim: #666C8A;
+  --bt-ink: #F5F6FC;
+}
+
+:root[data-theme="catppuccin-mocha"] {
+  --bt-red: #CBA6F7;
+  --bt-red-hover: #DEC2FF;
+  --bt-accent-rgb: 203 166 247;
+  --bt-on-accent: #11111B;
+  --bt-bg: #11111B;
+  --bt-surface: #181825;
+  --bt-elevated: #1E1E2E;
+  --bt-border: #313244;
+  --bt-muted: #A6ADC8;
+  --bt-dim: #6C7086;
+  --bt-ink: #CDD6F4;
+}
+
+:root[data-theme="clean-dark"] {
+  --bt-red: #38BDF8;
+  --bt-red-hover: #7DD3FC;
+  --bt-accent-rgb: 56 189 248;
+  --bt-on-accent: #07131A;
+  --bt-bg: #09090B;
+  --bt-surface: #111114;
+  --bt-elevated: #18181D;
+  --bt-border: #27272F;
+  --bt-muted: #A1A1AA;
+  --bt-dim: #71717A;
+  --bt-ink: #FAFAFA;
+}
+
+:root[data-theme="nord-frost"] {
+  --bt-red: #88C0D0;
+  --bt-red-hover: #A3D4E2;
+  --bt-accent-rgb: 136 192 208;
+  --bt-on-accent: #161B22;
+  --bt-bg: #1C212B;
+  --bt-surface: #242A36;
+  --bt-elevated: #2E3440;
+  --bt-border: #3E4759;
+  --bt-muted: #A6B2C5;
+  --bt-dim: #728098;
+  --bt-ink: #ECEFF4;
+}
+
+:root[data-theme="daylight-clean"] {
+  --bt-red: #2563EB;
+  --bt-red-hover: #1D4ED8;
+  --bt-accent-rgb: 37 99 235;
+  --bt-on-accent: #FFFFFF;
+  --bt-bg: #F3F5F9;
+  --bt-surface: #FFFFFF;
+  --bt-elevated: #EAEFF6;
+  --bt-border: #CBD5E1;
+  --bt-muted: #475569;
+  --bt-dim: #64748B;
+  --bt-ink: #0F172A;
+}
+
+:root[data-theme="catppuccin-latte"] {
+  --bt-red: #7C3AED;
+  --bt-red-hover: #6D28D9;
+  --bt-accent-rgb: 124 58 237;
+  --bt-on-accent: #FFFFFF;
+  --bt-bg: #EFF1F6;
+  --bt-surface: #FFFFFF;
+  --bt-elevated: #E6E9F2;
+  --bt-border: #C9CFE0;
+  --bt-muted: #4F546D;
+  --bt-dim: #6E738D;
+  --bt-ink: #1E2030;
 }
 
 @theme inline {
-  --color-bt-red: #E8002D;
-  --color-bt-red-hover: #FF1A45;
-  --color-bt-bg: #08060A;
-  --color-bt-surface: #110C0F;
-  --color-bt-elevated: #181116;
-  --color-bt-border: #2a1f24;
-  --color-bt-muted: #9e8d94;
-  --color-bt-dim: #6B5B62;
+  --color-bt-red: var(--bt-red);
+  --color-bt-red-hover: var(--bt-red-hover);
+  --color-bt-bg: var(--bt-bg);
+  --color-bt-surface: var(--bt-surface);
+  --color-bt-elevated: var(--bt-elevated);
+  --color-bt-border: var(--bt-border);
+  --color-bt-muted: var(--bt-muted);
+  --color-bt-dim: var(--bt-dim);
+  --color-bt-ink: var(--bt-ink);
+  --color-bt-on-accent: var(--bt-on-accent);
   --font-display: var(--font-display), sans-serif;
   --font-condensed: var(--font-condensed), sans-serif;
   --font-mono: var(--font-mono), monospace;
@@ -28,11 +132,11 @@
 
 body {
   background: var(--bt-bg);
-  color: #ffffff;
+  color: var(--bt-ink);
   font-family: var(--font-sans), system-ui, -apple-system, sans-serif;
 }
 
-/* BelTeez Studio / Persona 5 signature geometry */
+/* Signature chamfered frame geometry */
 .p5-frame,
 .p5-frame-sm {
   --cut: 14px;
@@ -66,12 +170,12 @@ body {
 @media (hover: hover) {
   .p5-frame-interactive:hover {
     transform: translate(-2px, -2px);
-    filter: drop-shadow(5px 5px 0 rgba(232, 0, 45, 0.45));
+    filter: drop-shadow(5px 5px 0 rgb(var(--bt-accent-rgb) / 0.4));
   }
 
   .p5-btn:hover:not(:disabled) {
     transform: translate(-1px, -1px);
-    filter: drop-shadow(4px 4px 0 rgba(232, 0, 45, 0.45));
+    filter: drop-shadow(4px 4px 0 rgb(var(--bt-accent-rgb) / 0.4));
   }
 }
 
@@ -85,19 +189,11 @@ body {
   transform: skewX(8deg);
 }
 
-@keyframes bt-dot-drift {
-  0% {
-    background-position: 0 0;
-  }
-  100% {
-    background-position: 28px 28px;
-  }
-}
-
+/* Static GPU-friendly micro-dot backdrop (avoids 60fps background-position repaints during scroll) */
 .dot-grid {
   background-image: radial-gradient(
     circle,
-    rgba(232, 0, 45, 0.22) 1px,
+    rgb(var(--bt-accent-rgb) / 0.22) 1px,
     transparent 1px
   );
   background-size: 28px 28px;
@@ -113,12 +209,25 @@ body {
     rgba(0, 0, 0, 0.35) 55%,
     transparent 100%
   );
-  animation: bt-dot-drift 28s linear infinite;
+  contain: strict;
+}
+
+/* Library catalog virtualization via CSS content-visibility: skips offscreen layout/paint */
+.catalog-card-opt {
+  content-visibility: auto;
+  contain-intrinsic-size: 280px 308px;
+  contain: layout style paint;
+}
+
+.catalog-row-opt {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 58px;
+  contain: layout style;
 }
 
 .tier-rail {
   scrollbar-width: thin;
-  scrollbar-color: rgba(232, 0, 45, 0.65) #110C0F;
+  scrollbar-color: rgb(var(--bt-accent-rgb) / 0.65) var(--bt-surface);
 }
 
 .tier-rail::-webkit-scrollbar {
@@ -127,15 +236,110 @@ body {
 }
 
 .tier-rail::-webkit-scrollbar-track {
-  background: #110C0F;
+  background: var(--bt-surface);
 }
 
 .tier-rail::-webkit-scrollbar-thumb {
-  background: rgba(232, 0, 45, 0.65);
+  background: rgb(var(--bt-accent-rgb) / 0.65);
 }
 
 .tier-rail::-webkit-scrollbar-thumb:hover {
-  background: #E8002D;
+  background: var(--bt-red);
+}
+
+/* Pastel dark accents (Catppuccin Mocha, Obsidian Cyan, Nord Frost): keep text crisp on solid accent fills (exclude .p5-frame border wrappers) */
+:root[data-theme-on-accent="dark"] .bg-bt-red:not(.p5-frame):not(.p5-frame-sm),
+:root[data-theme-on-accent="dark"] .bg-bt-red:not(.p5-frame):not(.p5-frame-sm) * {
+  color: var(--bt-on-accent);
+}
+
+/* Light-mode semantic contrast adaptation across all surfaces, badges, and status pills */
+:root[data-theme-mode="light"] :where(.text-white:not(.bg-bt-red):not(.bg-emerald-600):not(.bg-emerald-500):not([data-keep-white="true"])),
+:root[data-theme-mode="light"] :where(.hover\:text-white:hover:not(.bg-bt-red):not([data-keep-white="true"])),
+:root[data-theme-mode="light"] :where(.group:hover .group-hover\:text-white:not(.bg-bt-red):not([data-keep-white="true"])) {
+  color: var(--bt-ink);
+}
+
+:root[data-theme-mode="light"] .bg-bt-red:not(.p5-frame):not(.p5-frame-sm),
+:root[data-theme-mode="light"] .bg-bt-red:not(.p5-frame):not(.p5-frame-sm) *,
+:root[data-theme-mode="light"] .bg-emerald-600,
+:root[data-theme-mode="light"] .bg-emerald-600 *,
+:root[data-theme-mode="light"] [data-keep-white="true"],
+:root[data-theme-mode="light"] [data-keep-white="true"] .text-white {
+  color: #FFFFFF;
+}
+
+:root[data-theme-mode="light"] .text-white\/90:not(.bg-bt-red) {
+  color: color-mix(in srgb, var(--bt-ink) 92%, transparent);
+}
+
+:root[data-theme-mode="light"] .text-white\/85:not(.bg-bt-red),
+:root[data-theme-mode="light"] .text-white\/80:not(.bg-bt-red) {
+  color: color-mix(in srgb, var(--bt-ink) 80%, transparent);
+}
+
+:root[data-theme-mode="light"] .bg-white\/90,
+:root[data-theme-mode="light"] .bg-white\/80 {
+  background-color: color-mix(in srgb, var(--bt-ink) 78%, transparent);
+}
+
+:root[data-theme-mode="light"] .bg-white\/65 {
+  background-color: color-mix(in srgb, var(--bt-ink) 45%, transparent);
+}
+
+:root[data-theme-mode="light"] .border-white\/20,
+:root[data-theme-mode="light"] .border-white\/15 {
+  border-color: color-mix(in srgb, var(--bt-ink) 20%, transparent);
+}
+
+:root[data-theme-mode="light"] .text-emerald-200,
+:root[data-theme-mode="light"] .text-emerald-300,
+:root[data-theme-mode="light"] .text-emerald-400 {
+  color: #047857;
+}
+
+:root[data-theme-mode="light"] .bg-emerald-950\/70,
+:root[data-theme-mode="light"] .bg-emerald-950\/60,
+:root[data-theme-mode="light"] .bg-emerald-950\/40,
+:root[data-theme-mode="light"] .bg-emerald-950\/30 {
+  background-color: rgba(16, 185, 129, 0.13);
+}
+
+:root[data-theme-mode="light"] .text-amber-100,
+:root[data-theme-mode="light"] .text-amber-100\/90,
+:root[data-theme-mode="light"] .text-amber-100\/85,
+:root[data-theme-mode="light"] .text-amber-200,
+:root[data-theme-mode="light"] .text-amber-200\/85,
+:root[data-theme-mode="light"] .text-amber-200\/80,
+:root[data-theme-mode="light"] .text-amber-200\/75,
+:root[data-theme-mode="light"] .text-amber-200\/60,
+:root[data-theme-mode="light"] .text-amber-300,
+:root[data-theme-mode="light"] .text-amber-400 {
+  color: #B45309;
+}
+
+:root[data-theme-mode="light"] .bg-amber-950\/60,
+:root[data-theme-mode="light"] .bg-amber-950\/50,
+:root[data-theme-mode="light"] .bg-amber-950\/40 {
+  background-color: rgba(245, 158, 11, 0.14);
+}
+
+:root[data-theme-mode="light"] .text-sky-200,
+:root[data-theme-mode="light"] .text-sky-300,
+:root[data-theme-mode="light"] .text-sky-400 {
+  color: #0369A1;
+}
+
+:root[data-theme-mode="light"] .text-red-200 {
+  color: #B91C1C;
+}
+
+:root[data-theme-mode="light"] .dot-grid {
+  background-image: radial-gradient(
+    circle,
+    rgb(var(--bt-accent-rgb) / 0.18) 1px,
+    transparent 1px
+  );
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -146,9 +350,5 @@ body {
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
     scroll-behavior: auto !important;
-  }
-
-  .dot-grid {
-    animation: none !important;
   }
 }

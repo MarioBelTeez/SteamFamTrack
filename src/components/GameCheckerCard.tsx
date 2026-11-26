@@ -26,6 +26,7 @@ import {
   Dices,
   ExternalLink,
   Flame,
+  Gamepad2,
   Gift,
   Loader2,
   Lock,
@@ -87,7 +88,7 @@ function buildAnnouncementText(result: SteamGameCheckResult): string {
   const discount = result.priceOverview?.discountPercent ?? 0;
   const pricePart =
     discount > 0 ? `${priceLabel}, -${discount}%` : priceLabel;
-  return `🛒 I'll buy ${result.name} (${pricePart}) for the Steam Family!`;
+  return `🛒 I'll buy ${result.name} (${pricePart}) for the Steam Family! ${result.storeUrl}`;
 }
 
 function loadStarredFromStorage(): EnrichedStoreGame[] {
@@ -164,6 +165,46 @@ interface BrowseGameCardProps {
   onToggleStar: (game: EnrichedStoreGame) => void;
 }
 
+function StoreHeaderImage({
+  src,
+  alt,
+  appid,
+  hoverZoom = false,
+}: {
+  src: string;
+  alt: string;
+  appid: number;
+  hoverZoom?: boolean;
+}) {
+  const [failed, setFailed] = useState(false);
+
+  if (!src || failed) {
+    return (
+      <div className="flex h-full w-full flex-col items-center justify-center gap-1.5 bg-bt-bg px-4 text-center">
+        <Gamepad2 className="h-7 w-7 text-bt-dim" aria-hidden="true" />
+        <span className="font-mono text-[10px] uppercase tracking-widest text-bt-dim">
+          NO ART // APP {appid}
+        </span>
+      </div>
+    );
+  }
+
+  return (
+    // eslint-disable-next-line @next/next/no-img-element
+    <img
+      src={src}
+      alt={alt}
+      loading="lazy"
+      onError={() => setFailed(true)}
+      className={
+        hoverZoom
+          ? "w-full h-full object-cover transition-transform duration-300 group-hover:scale-[1.03]"
+          : "w-full h-full object-cover"
+      }
+    />
+  );
+}
+
 function BrowseGameCard({
   game,
   isStarred,
@@ -176,150 +217,148 @@ function BrowseGameCard({
   onToggleStar,
 }: BrowseGameCardProps) {
   return (
-    <div
-      role="button"
-      tabIndex={0}
-      onClick={() => onInspect(game.appid)}
-      onKeyDown={(e) => {
-        if (e.key === "Enter" || e.key === " ") {
-          e.preventDefault();
-          onInspect(game.appid);
-        }
-      }}
-      className={`p5-frame-sm p5-frame-interactive group text-left cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-bt-red ${
-        isSelected
-          ? "bg-bt-red"
-          : "bg-bt-border hover:bg-bt-red/75"
-      }`}
-    >
-      <div className="bg-bt-elevated flex flex-col h-full overflow-hidden">
-      <div className="relative w-full aspect-[460/215] bg-bt-bg overflow-hidden border-b border-bt-border">
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img
-          src={game.headerImage}
-          alt={game.name}
-          loading="lazy"
-          className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-[1.03]"
-        />
-        <div className="absolute inset-0 bg-gradient-to-t from-black/75 via-transparent to-black/35 pointer-events-none" />
-
-        <div className="absolute top-2 left-2 flex flex-wrap items-center gap-1.5">
-          {game.discountPercent > 0 && (
-            <span className="px-2 py-0.5 bg-emerald-500 text-black font-mono text-[11px] font-extrabold tracking-tight shadow">
-              -{game.discountPercent}%
-            </span>
-          )}
-          {claim && (
-            <span className="px-2 py-0.5 bg-bt-red text-white font-mono text-[10px] font-bold uppercase tracking-wider shadow">
-              CLAIMED
-            </span>
-          )}
-        </div>
-
+    <article className="relative group">
+      <div
+        className={`p5-frame-sm p5-frame-interactive h-full ${
+          isSelected ? "bg-bt-red" : "bg-bt-border hover:bg-bt-red/75"
+        }`}
+      >
         <button
           type="button"
-          onClick={(e) => {
-            e.stopPropagation();
-            onToggleStar(game);
-          }}
-          aria-label={isStarred ? `Unstar ${game.name}` : `Star ${game.name}`}
-          title={isStarred ? "Remove from Starred" : "Star this game"}
-          className={`absolute top-2 right-2 w-8 h-8 flex items-center justify-center border transition-colors cursor-pointer ${
-            isStarred
-              ? "bg-black/80 border-amber-400/80 text-amber-400"
-              : "bg-black/65 border-white/20 text-white/75 hover:text-amber-300 hover:border-amber-400/60"
-          }`}
+          onClick={() => onInspect(game.appid)}
+          className="w-full h-full bg-bt-elevated flex flex-col overflow-hidden text-left cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-bt-red"
         >
-          <Star
-            className={`w-4 h-4 ${isStarred ? "fill-amber-400 text-amber-400" : ""}`}
-          />
-        </button>
+          <div className="relative w-full aspect-[460/215] bg-bt-bg overflow-hidden border-b border-bt-border">
+            <StoreHeaderImage
+              key={game.headerImage}
+              src={game.headerImage}
+              alt={game.name}
+              appid={game.appid}
+              hoverZoom
+            />
+            <div className="absolute inset-0 bg-gradient-to-t from-black/75 via-transparent to-black/35 pointer-events-none" />
 
-        {typeof wishCount === "number" && wishCount > 0 && (
-          <div className="absolute bottom-2 left-2">
-            <span className="px-2 py-0.5 bg-bt-red/95 border border-white/20 text-white font-mono text-[10px] font-bold uppercase tracking-wider shadow">
-              {wishCount} {wishCount === 1 ? "WANTS" : "WANT"} THIS
-            </span>
-          </div>
-        )}
-      </div>
-
-      <div className="p-4 sm:p-5 flex-1 flex flex-col justify-between gap-3.5">
-        <div className="space-y-2.5">
-          <h4 className="font-display text-lg sm:text-xl leading-tight text-white group-hover:text-bt-red transition-colors line-clamp-2">
-            {game.name}
-          </h4>
-
-          <div className="flex flex-wrap items-center gap-2">
-            {game.isFree ? (
-              <span className="px-2 py-1 bg-emerald-500/15 border border-emerald-500/40 text-emerald-300 font-mono text-[10px] uppercase tracking-wider">
-                Free to Play
-              </span>
-            ) : game.familySharingSupported ? (
-              <span className="px-2 py-1 bg-emerald-500/15 border border-emerald-500/40 text-emerald-300 font-mono text-[10px] uppercase tracking-wider inline-flex items-center gap-1">
-                <CheckCircle2 className="w-3 h-3" /> Family Share
-              </span>
-            ) : (
-              <span className="px-2 py-1 bg-bt-red/15 border border-bt-red/40 text-red-200 font-mono text-[10px] uppercase tracking-wider inline-flex items-center gap-1">
-                <ShieldAlert className="w-3 h-3 text-bt-red" /> No Sharing
-              </span>
-            )}
-
-            {owners.length > 0 && (
-              <span className="px-2 py-1 bg-sky-500/15 border border-sky-500/40 text-sky-200 font-mono text-[10px] uppercase tracking-wider inline-flex items-center gap-1">
-                <Users className="w-3 h-3" />
-                {owners.length === 1
-                  ? `Owned: ${owners[0]}`
-                  : `Owned (${owners.length})`}
-              </span>
-            )}
-          </div>
-
-          {wishedBy && wishedBy.length > 0 && (
-            <div className="flex flex-wrap gap-1 pt-0.5">
-              {wishedBy.map((w) => (
-                <span
-                  key={w.memberId}
-                  className="px-1.5 py-0.5 bg-bt-bg border border-bt-border text-[10px] font-mono text-bt-muted"
-                >
-                  {w.name}
+            <div className="absolute top-2 left-2 pr-10 flex flex-wrap items-center gap-1.5">
+              {game.discountPercent > 0 && (
+                <span className="px-2 py-0.5 bg-emerald-500 text-black font-mono text-[11px] font-extrabold tracking-tight shadow">
+                  -{game.discountPercent}%
                 </span>
-              ))}
+              )}
+              {claim && (
+                <span className="px-2 py-0.5 bg-bt-red text-white font-mono text-[10px] font-bold uppercase tracking-wider shadow">
+                  CLAIMED
+                </span>
+              )}
             </div>
-          )}
-        </div>
 
-        <div className="pt-2.5 border-t border-bt-border/70 flex items-baseline justify-between gap-2">
-          <div className="flex items-baseline gap-2 min-w-0">
-            {game.isFree ? (
-              <span className="font-display text-lg text-emerald-400">
-                FREE
-              </span>
-            ) : game.finalFormatted ? (
-              <>
-                <span className="font-display text-lg text-white">
-                  {game.finalFormatted}
+            {typeof wishCount === "number" && wishCount > 0 && (
+              <div className="absolute bottom-2 left-2">
+                <span
+                  data-keep-white="true"
+                  className="px-2 py-0.5 bg-bt-red/95 border border-white/20 text-white font-mono text-[10px] font-bold uppercase tracking-wider shadow"
+                >
+                  {wishCount} {wishCount === 1 ? "WANTS" : "WANT"} THIS
                 </span>
-                {game.discountPercent > 0 && game.initialFormatted && (
-                  <span className="font-mono text-[11px] text-bt-dim line-through truncate">
-                    {game.initialFormatted}
+              </div>
+            )}
+          </div>
+
+          <div className="p-4 sm:p-5 flex-1 flex flex-col justify-between gap-3.5 w-full">
+            <div className="space-y-2.5">
+              <h4 className="font-display text-lg sm:text-xl leading-tight text-white group-hover:text-bt-red transition-colors line-clamp-2">
+                {game.name}
+              </h4>
+
+              <div className="flex flex-wrap items-center gap-2">
+                {game.isFree ? (
+                  <span className="px-2 py-1 bg-emerald-500/15 border border-emerald-500/40 text-emerald-300 font-mono text-[10px] uppercase tracking-wider">
+                    Free to Play
+                  </span>
+                ) : game.familySharingSupported ? (
+                  <span className="px-2 py-1 bg-emerald-500/15 border border-emerald-500/40 text-emerald-300 font-mono text-[10px] uppercase tracking-wider inline-flex items-center gap-1">
+                    <CheckCircle2 className="w-3 h-3" /> Family Share
+                  </span>
+                ) : (
+                  <span className="px-2 py-1 bg-bt-red/15 border border-bt-red/40 text-red-200 font-mono text-[10px] uppercase tracking-wider inline-flex items-center gap-1">
+                    <ShieldAlert className="w-3 h-3 text-bt-red" /> No Sharing
                   </span>
                 )}
-              </>
-            ) : (
-              <span className="font-mono text-xs text-bt-muted">
-                Price unavailable
-              </span>
-            )}
-          </div>
 
-          <span className="font-mono text-[10px] uppercase tracking-wider text-bt-dim group-hover:text-white transition-colors shrink-0">
-            Inspect →
-          </span>
-        </div>
+                {owners.length > 0 && (
+                  <span className="px-2 py-1 bg-sky-500/15 border border-sky-500/40 text-sky-200 font-mono text-[10px] uppercase tracking-wider inline-flex items-center gap-1">
+                    <Users className="w-3 h-3" />
+                    {owners.length === 1
+                      ? `Owned: ${owners[0]}`
+                      : `Owned (${owners.length})`}
+                  </span>
+                )}
+              </div>
+
+              {wishedBy && wishedBy.length > 0 && (
+                <div className="flex flex-wrap gap-1 pt-0.5">
+                  {wishedBy.map((w) => (
+                    <span
+                      key={w.memberId}
+                      className="px-1.5 py-0.5 bg-bt-bg border border-bt-border text-[10px] font-mono text-bt-muted"
+                    >
+                      {w.name}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="pt-2.5 border-t border-bt-border/70 flex items-baseline justify-between gap-2 w-full">
+              <div className="flex items-baseline gap-2 min-w-0">
+                {game.isFree ? (
+                  <span className="font-display text-lg text-emerald-400">
+                    FREE
+                  </span>
+                ) : game.finalFormatted ? (
+                  <>
+                    <span className="font-display text-lg text-white">
+                      {game.finalFormatted}
+                    </span>
+                    {game.discountPercent > 0 && game.initialFormatted && (
+                      <span className="font-mono text-[11px] text-bt-dim line-through truncate">
+                        {game.initialFormatted}
+                      </span>
+                    )}
+                  </>
+                ) : (
+                  <span className="font-mono text-xs text-bt-muted">
+                    Price unavailable
+                  </span>
+                )}
+              </div>
+
+              <span className="font-mono text-[10px] uppercase tracking-wider text-bt-dim group-hover:text-white transition-colors shrink-0">
+                Inspect →
+              </span>
+            </div>
+          </div>
+        </button>
       </div>
-      </div>
-    </div>
+
+      {/* Sibling Star toggle avoids nested interactive buttons */}
+      <button
+        type="button"
+        data-keep-white="true"
+        onClick={() => onToggleStar(game)}
+        aria-pressed={isStarred}
+        aria-label={isStarred ? `Unstar ${game.name}` : `Star ${game.name}`}
+        title={isStarred ? "Remove from Starred" : "Star this game"}
+        className={`absolute top-2.5 right-3 z-10 w-8 h-8 flex items-center justify-center border transition-colors cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-400 ${
+          isStarred
+            ? "bg-black/80 border-amber-400/80 text-amber-400"
+            : "bg-black/65 border-white/20 text-white/75 hover:text-amber-300 hover:border-amber-400/60"
+        }`}
+      >
+        <Star
+          className={`w-4 h-4 ${isStarred ? "fill-amber-400 text-amber-400" : ""}`}
+        />
+      </button>
+    </article>
   );
 }
 
@@ -335,15 +374,22 @@ export function GameCheckerCard({
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<SteamGameCheckResult | null>(null);
   const [rouletteMode, setRouletteMode] = useState<RouletteMode>("fairness");
+  const [excludeOwnersFromRoulette, setExcludeOwnersFromRoulette] =
+    useState(true);
   const [spinning, setSpinning] = useState(false);
   const [highlightedIndex, setHighlightedIndex] = useState<number | null>(null);
   const [winnerId, setWinnerId] = useState<string | null>(null);
 
   const [starredGames, setStarredGames] = useState<EnrichedStoreGame[]>([]);
   const [claimedGames, setClaimedGames] = useState<ClaimedGamesMap>({});
-  const [justClaimedAppId, setJustClaimedAppId] = useState<number | null>(null);
+  const [justClaimedState, setJustClaimedState] = useState<{
+    appid: number;
+    copied: boolean;
+  } | null>(null);
 
   const [activeTab, setActiveTab] = useState<BrowserTab>("discounts");
+  const [hideOwnedFilter, setHideOwnedFilter] = useState(false);
+  const [familyShareOnlyFilter, setFamilyShareOnlyFilter] = useState(false);
   const [discounts, setDiscounts] = useState<EnrichedStoreGame[]>([]);
   const [discountsLoading, setDiscountsLoading] = useState(false);
   const [discountsError, setDiscountsError] = useState<string | null>(null);
@@ -356,6 +402,7 @@ export function GameCheckerCard({
   const [wishlistsError, setWishlistsError] = useState<string | null>(null);
 
   const spinTimersRef = useRef<number[]>([]);
+  const checkAbortRef = useRef<AbortController | null>(null);
   const claimFeedbackTimerRef = useRef<number | null>(null);
   const spotlightRef = useRef<HTMLDivElement | null>(null);
   const rouletteRef = useRef<HTMLDivElement | null>(null);
@@ -375,6 +422,7 @@ export function GameCheckerCard({
 
     return () => {
       clearSpinTimers();
+      checkAbortRef.current?.abort();
       if (claimFeedbackTimerRef.current !== null) {
         window.clearTimeout(claimFeedbackTimerRef.current);
       }
@@ -495,35 +543,65 @@ export function GameCheckerCard({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [region, wishlistMembersKey, fetchWishlists]);
 
-  async function runCheck(searchQuery: string) {
-    const trimmed = searchQuery.trim();
-    if (!trimmed) return;
+  const runCheck = useCallback(
+    async (searchQuery: string, targetRegion: SteamRegion = region) => {
+      const trimmed = searchQuery.trim();
+      if (!trimmed) return;
 
-    clearSpinTimers();
-    setSpinning(false);
-    setHighlightedIndex(null);
-    setWinnerId(null);
-    setLoading(true);
-    setError(null);
-    try {
-      const res = await fetch("/api/steam/check", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ query: trimmed, region }),
-      });
-      const data = (await res.json()) as SteamGameCheckResult & {
-        error?: string;
-      };
-      if (!res.ok) {
-        throw new Error(data.error || "Failed to check game");
+      checkAbortRef.current?.abort();
+      const controller = new AbortController();
+      checkAbortRef.current = controller;
+
+      clearSpinTimers();
+      setSpinning(false);
+      setHighlightedIndex(null);
+      setWinnerId(null);
+      setLoading(true);
+      setError(null);
+      try {
+        const res = await fetch("/api/steam/check", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ query: trimmed, region: targetRegion }),
+          signal: controller.signal,
+        });
+        const data = (await res.json()) as SteamGameCheckResult & {
+          error?: string;
+        };
+        if (controller.signal.aborted) return;
+        if (!res.ok) {
+          throw new Error(data.error || "Failed to check game");
+        }
+        setResult(data);
+      } catch (err) {
+        if (controller.signal.aborted) return;
+        setError(err instanceof Error ? err.message : "Failed to check game");
+      } finally {
+        if (!controller.signal.aborted) {
+          setLoading(false);
+        }
       }
-      setResult(data);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to check game");
-    } finally {
-      setLoading(false);
-    }
-  }
+    },
+    [clearSpinTimers, region]
+  );
+
+  // Re-fetch currently inspected game when the active Steam pricing region changes
+  useEffect(() => {
+    if (!result || result.region === region) return;
+    queueMicrotask(() => {
+      void runCheck(String(result.appid), region);
+    });
+  }, [region, result, runCheck]);
+
+  // Cancel any in-flight roulette spin if the active family roster changes
+  useEffect(() => {
+    clearSpinTimers();
+    queueMicrotask(() => {
+      setSpinning(false);
+      setHighlightedIndex(null);
+      setWinnerId(null);
+    });
+  }, [wishlistMembersKey, clearSpinTimers]);
 
   function inspectFromBrowser(appid: number) {
     spotlightRef.current?.scrollIntoView({
@@ -588,9 +666,11 @@ export function GameCheckerCard({
       });
 
       const announcement = buildAnnouncementText(gameResult);
+      let copied = false;
       try {
         if (navigator.clipboard?.writeText) {
           await navigator.clipboard.writeText(announcement);
+          copied = true;
         }
       } catch {
         // Clipboard access may be blocked in non-HTTPS contexts
@@ -599,9 +679,9 @@ export function GameCheckerCard({
       if (claimFeedbackTimerRef.current !== null) {
         window.clearTimeout(claimFeedbackTimerRef.current);
       }
-      setJustClaimedAppId(gameResult.appid);
+      setJustClaimedState({ appid: gameResult.appid, copied });
       claimFeedbackTimerRef.current = window.setTimeout(() => {
-        setJustClaimedAppId(null);
+        setJustClaimedState(null);
       }, 3200);
     },
     [activeLibraries, currentUserName]
@@ -614,7 +694,7 @@ export function GameCheckerCard({
       saveClaimedToStorage(next);
       return next;
     });
-    setJustClaimedAppId((prev) => (prev === appid ? null : prev));
+    setJustClaimedState((prev) => (prev?.appid === appid ? null : prev));
   }, []);
 
   const ownership = useMemo(() => {
@@ -628,9 +708,22 @@ export function GameCheckerCard({
     return { activeOwners, waitlistOwners };
   }, [result, activeLibraries, waitlistLibraries]);
 
+  const activeOwnerIdSet = useMemo(
+    () => new Set(ownership.activeOwners.map((o) => o.member.id)),
+    [ownership.activeOwners]
+  );
+
+  const canExcludeOwners =
+    activeOwnerIdSet.size > 0 && activeOwnerIdSet.size < activeLibraries.length;
+
   const rouletteEntries = useMemo(() => {
     if (activeLibraries.length === 0) return [];
-    const weighted = activeLibraries.map((lib) => {
+    const eligibleLibraries =
+      canExcludeOwners && excludeOwnersFromRoulette
+        ? activeLibraries.filter((lib) => !activeOwnerIdSet.has(lib.member.id))
+        : activeLibraries;
+
+    const weighted = eligibleLibraries.map((lib) => {
       const fairnessMember = fairness?.members.find(
         (m) => m.memberId === lib.member.id
       );
@@ -646,6 +739,7 @@ export function GameCheckerCard({
         avatarUrl: lib.avatarUrl,
         weight,
         isUpNext: fairnessMember?.isUpNext ?? false,
+        alreadyOwns: activeOwnerIdSet.has(lib.member.id),
       };
     });
 
@@ -659,7 +753,14 @@ export function GameCheckerCard({
         oddsLabel,
       };
     });
-  }, [activeLibraries, fairness, rouletteMode]);
+  }, [
+    activeLibraries,
+    fairness,
+    rouletteMode,
+    canExcludeOwners,
+    excludeOwnersFromRoulette,
+    activeOwnerIdSet,
+  ]);
 
   const selectedWinner = useMemo(
     () => rouletteEntries.find((entry) => entry.memberId === winnerId) ?? null,
@@ -673,6 +774,14 @@ export function GameCheckerCard({
     setHighlightedIndex(null);
     setWinnerId(null);
     setRouletteMode(nextMode);
+  }
+
+  function handleToggleExcludeOwners() {
+    clearSpinTimers();
+    setSpinning(false);
+    setHighlightedIndex(null);
+    setWinnerId(null);
+    setExcludeOwnersFromRoulette((prev) => !prev);
   }
 
   function spinRoulette() {
@@ -708,7 +817,7 @@ export function GameCheckerCard({
       const t = steps > 1 ? i / (steps - 1) : 1;
       return 38 + 185 * t * t;
     });
-    const rawTotal = rawDelays.reduce((sum, d) => sum + d, 0);
+    const rawTotal = rawDelays.slice(1).reduce((sum, d) => sum + d, 0);
     const targetDurationMs = n === 1 ? 650 : 1400;
     const scale = rawTotal > 0 ? targetDurationMs / rawTotal : 1;
 
@@ -728,6 +837,55 @@ export function GameCheckerCard({
       spinTimersRef.current.push(timer);
     }
   }
+
+  // Merge fresh live pricing from current discounts/wishlists onto bookmarked Starred entries
+  const livePriceByAppId = useMemo(() => {
+    const map = new Map<number, EnrichedStoreGame>();
+    for (const item of wishlists) {
+      map.set(item.appid, item);
+    }
+    for (const item of discounts) {
+      map.set(item.appid, item);
+    }
+    return map;
+  }, [discounts, wishlists]);
+
+  const hydratedStarredGames = useMemo(
+    () =>
+      starredGames.map((item) => livePriceByAppId.get(item.appid) ?? item),
+    [starredGames, livePriceByAppId]
+  );
+
+  const matchesBrowserFilters = useCallback(
+    (item: EnrichedStoreGame) => {
+      if (hideOwnedFilter && (ownedByAppId.get(item.appid)?.length ?? 0) > 0) {
+        return false;
+      }
+      if (
+        familyShareOnlyFilter &&
+        !item.isFree &&
+        !item.familySharingSupported
+      ) {
+        return false;
+      }
+      return true;
+    },
+    [hideOwnedFilter, familyShareOnlyFilter, ownedByAppId]
+  );
+
+  const filteredDiscounts = useMemo(
+    () => discounts.filter(matchesBrowserFilters),
+    [discounts, matchesBrowserFilters]
+  );
+  const filteredWishlists = useMemo(
+    () => wishlists.filter(matchesBrowserFilters),
+    [wishlists, matchesBrowserFilters]
+  );
+  const filteredStarred = useMemo(
+    () => hydratedStarredGames.filter(matchesBrowserFilters),
+    [hydratedStarredGames, matchesBrowserFilters]
+  );
+  const hasBrowserFilters = hideOwnedFilter || familyShareOnlyFilter;
 
   function handleSpinFromHero() {
     rouletteRef.current?.scrollIntoView({
@@ -807,11 +965,11 @@ export function GameCheckerCard({
               {/* Left Hero Image & Pricing Column */}
               <div className="bg-bt-surface border-b lg:border-b-0 lg:border-r border-bt-border flex flex-col justify-between">
                 <div className="relative w-full aspect-[460/215] bg-bt-bg overflow-hidden">
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img
+                  <StoreHeaderImage
+                    key={result.headerImage}
                     src={result.headerImage}
                     alt={result.name}
-                    className="w-full h-full object-cover"
+                    appid={result.appid}
                   />
                   <div className="absolute inset-0 bg-gradient-to-t from-black/75 via-transparent to-black/30 pointer-events-none" />
 
@@ -872,7 +1030,7 @@ export function GameCheckerCard({
 
                   <div className="border-t border-bt-border/70 pt-3">
                     <div className="font-mono text-[10px] uppercase tracking-wider text-bt-dim mb-1">
-                      CURRENT PRICE ({regionInfo.code.toUpperCase()})
+                      CURRENT PRICE ({STEAM_REGIONS[result.region].code.toUpperCase()})
                     </div>
                     {result.isFree ? (
                       <div className="font-display text-3xl text-emerald-400">
@@ -967,9 +1125,12 @@ export function GameCheckerCard({
                         onClick={() => handleAnnounceClaim(result)}
                         className="p5-btn bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2.5 font-condensed font-bold uppercase tracking-wider text-sm inline-flex items-center justify-center gap-2 cursor-pointer"
                       >
-                        {justClaimedAppId === result.appid ? (
+                        {justClaimedState?.appid === result.appid ? (
                           <>
-                            <Check className="w-4 h-4" /> Claimed &amp; Copied!
+                            <Check className="w-4 h-4" />{" "}
+                            {justClaimedState.copied
+                              ? "Claimed & Copied!"
+                              : "Claimed!"}
                           </>
                         ) : (
                           <>
@@ -1078,33 +1239,51 @@ export function GameCheckerCard({
                         THIS? // BUYER ROULETTE
                       </div>
 
-                      <div
-                        role="group"
-                        aria-label="Buyer roulette odds mode"
-                        className="inline-flex items-center bg-bt-bg border border-bt-border p-0.5"
-                      >
-                        <button
-                          type="button"
-                          onClick={() => handleModeChange("fairness")}
-                          className={`px-2.5 py-1 font-mono text-[10px] uppercase tracking-wider inline-flex items-center gap-1 transition-colors cursor-pointer ${
-                            rouletteMode === "fairness"
-                              ? "bg-bt-red text-white font-bold"
-                              : "text-bt-muted hover:text-white"
-                          }`}
+                      <div className="flex flex-wrap items-center gap-2">
+                        {canExcludeOwners && (
+                          <button
+                            type="button"
+                            onClick={handleToggleExcludeOwners}
+                            aria-pressed={excludeOwnersFromRoulette}
+                            className={`px-2.5 py-1 border font-mono text-[10px] uppercase tracking-wider transition-colors cursor-pointer ${
+                              excludeOwnersFromRoulette
+                                ? "bg-emerald-500/15 border-emerald-500/50 text-emerald-300 font-bold"
+                                : "bg-bt-bg border-bt-border text-bt-muted hover:text-white"
+                            }`}
+                          >
+                            {excludeOwnersFromRoulette
+                              ? `Excluding ${activeOwnerIdSet.size} Owner${activeOwnerIdSet.size > 1 ? "s" : ""}`
+                              : "Including Owners"}
+                          </button>
+                        )}
+                        <div
+                          role="group"
+                          aria-label="Buyer roulette odds mode"
+                          className="inline-flex items-center bg-bt-bg border border-bt-border p-0.5"
                         >
-                          <Scale className="w-3 h-3" /> Fairness-Weighted
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handleModeChange("equal")}
-                          className={`px-2.5 py-1 font-mono text-[10px] uppercase tracking-wider transition-colors cursor-pointer ${
-                            rouletteMode === "equal"
-                              ? "bg-bt-red text-white font-bold"
-                              : "text-bt-muted hover:text-white"
-                          }`}
-                        >
-                          Equal Odds
-                        </button>
+                          <button
+                            type="button"
+                            onClick={() => handleModeChange("fairness")}
+                            className={`px-2.5 py-1 font-mono text-[10px] uppercase tracking-wider inline-flex items-center gap-1 transition-colors cursor-pointer ${
+                              rouletteMode === "fairness"
+                                ? "bg-bt-red text-white font-bold"
+                                : "text-bt-muted hover:text-white"
+                            }`}
+                          >
+                            <Scale className="w-3 h-3" /> Fairness-Weighted
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleModeChange("equal")}
+                            className={`px-2.5 py-1 font-mono text-[10px] uppercase tracking-wider transition-colors cursor-pointer ${
+                              rouletteMode === "equal"
+                                ? "bg-bt-red text-white font-bold"
+                                : "text-bt-muted hover:text-white"
+                            }`}
+                          >
+                            Equal Odds
+                          </button>
+                        </div>
                       </div>
                     </div>
 
@@ -1120,9 +1299,9 @@ export function GameCheckerCard({
                             key={entry.memberId}
                             className={`flex items-center justify-between gap-2 px-2.5 py-2 border transition-all duration-100 ${
                               isWinner
-                                ? "border-bt-red bg-bt-red/20 shadow-[0_0_0_1px_#E8002D]"
+                                ? "border-bt-red bg-bt-red/20 shadow-[0_0_0_1px_var(--bt-red)]"
                                 : isHighlighted
-                                  ? "border-bt-red bg-bt-red/25 text-white scale-[1.02] shadow-[0_0_14px_rgba(232,0,45,0.45)]"
+                                  ? "border-bt-red bg-bt-red/25 text-white scale-[1.02] shadow-[0_0_14px_rgb(var(--bt-accent-rgb)/0.45)]"
                                   : "border-bt-border bg-bt-surface/80"
                             }`}
                           >
@@ -1345,9 +1524,35 @@ export function GameCheckerCard({
             </button>
           </div>
 
-          <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-bt-dim">
-            CLICK ANY CARD TO INSPECT // {regionInfo.code.toUpperCase()}
-          </span>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setHideOwnedFilter((prev) => !prev)}
+              aria-pressed={hideOwnedFilter}
+              className={`px-2.5 py-1.5 border font-mono text-[10px] uppercase tracking-wider transition-colors cursor-pointer ${
+                hideOwnedFilter
+                  ? "bg-bt-red/20 border-bt-red text-white font-bold"
+                  : "bg-bt-bg border-bt-border text-bt-muted hover:text-white hover:border-bt-red/60"
+              }`}
+            >
+              Hide Owned
+            </button>
+            <button
+              type="button"
+              onClick={() => setFamilyShareOnlyFilter((prev) => !prev)}
+              aria-pressed={familyShareOnlyFilter}
+              className={`px-2.5 py-1.5 border font-mono text-[10px] uppercase tracking-wider transition-colors cursor-pointer ${
+                familyShareOnlyFilter
+                  ? "bg-emerald-500/20 border-emerald-500/60 text-emerald-300 font-bold"
+                  : "bg-bt-bg border-bt-border text-bt-muted hover:text-white hover:border-emerald-500/50"
+              }`}
+            >
+              Family Share Only
+            </button>
+            <span className="hidden sm:inline font-mono text-[10px] uppercase tracking-[0.18em] text-bt-dim pl-1">
+              {regionInfo.code.toUpperCase()}
+            </span>
+          </div>
         </div>
 
         {/* Tab 1: Popular Steam Discounts */}
@@ -1378,9 +1583,27 @@ export function GameCheckerCard({
               <div className="border border-bt-border bg-bt-surface/60 p-8 text-center text-sm text-bt-muted">
                 No discounted Steam titles found for {regionInfo.label} right now.
               </div>
+            ) : filteredDiscounts.length === 0 ? (
+              <div className="border border-bt-border bg-bt-surface/60 p-8 text-center space-y-3">
+                <div className="text-sm text-bt-muted">
+                  All {discounts.length} discounts were filtered out by your active filters.
+                </div>
+                {hasBrowserFilters && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setHideOwnedFilter(false);
+                      setFamilyShareOnlyFilter(false);
+                    }}
+                    className="px-3 py-1.5 bg-bt-red text-white font-mono text-xs uppercase tracking-wider cursor-pointer"
+                  >
+                    Clear Filters
+                  </button>
+                )}
+              </div>
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
-                {discounts.map((item) => (
+                {filteredDiscounts.map((item) => (
                   <BrowseGameCard
                     key={item.appid}
                     game={item}
@@ -1443,9 +1666,27 @@ export function GameCheckerCard({
               <div className="border border-bt-border bg-bt-surface/60 p-8 text-center text-sm text-bt-muted">
                 No public wishlist games found across your active family members.
               </div>
+            ) : filteredWishlists.length === 0 ? (
+              <div className="border border-bt-border bg-bt-surface/60 p-8 text-center space-y-3">
+                <div className="text-sm text-bt-muted">
+                  All {wishlists.length} wishlisted titles were filtered out by your active filters.
+                </div>
+                {hasBrowserFilters && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setHideOwnedFilter(false);
+                      setFamilyShareOnlyFilter(false);
+                    }}
+                    className="px-3 py-1.5 bg-bt-red text-white font-mono text-xs uppercase tracking-wider cursor-pointer"
+                  >
+                    Clear Filters
+                  </button>
+                )}
+              </div>
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
-                {wishlists.map((item) => (
+                {filteredWishlists.map((item) => (
                   <BrowseGameCard
                     key={item.appid}
                     game={item}
@@ -1467,7 +1708,7 @@ export function GameCheckerCard({
         {/* Tab 3: Starred */}
         {activeTab === "starred" && (
           <div className="space-y-4">
-            {starredGames.length === 0 ? (
+            {hydratedStarredGames.length === 0 ? (
               <div className="border border-bt-border bg-bt-surface/60 p-8 text-center space-y-2">
                 <div className="flex justify-center">
                   <Star className="w-6 h-6 text-amber-400/70" />
@@ -1478,9 +1719,27 @@ export function GameCheckerCard({
                   on any game to bookmark it for later.
                 </div>
               </div>
+            ) : filteredStarred.length === 0 ? (
+              <div className="border border-bt-border bg-bt-surface/60 p-8 text-center space-y-3">
+                <div className="text-sm text-bt-muted">
+                  All {hydratedStarredGames.length} starred games were filtered out by your active filters.
+                </div>
+                {hasBrowserFilters && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setHideOwnedFilter(false);
+                      setFamilyShareOnlyFilter(false);
+                    }}
+                    className="px-3 py-1.5 bg-bt-red text-white font-mono text-xs uppercase tracking-wider cursor-pointer"
+                  >
+                    Clear Filters
+                  </button>
+                )}
+              </div>
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
-                {starredGames.map((item) => (
+                {filteredStarred.map((item) => (
                   <BrowseGameCard
                     key={item.appid}
                     game={item}

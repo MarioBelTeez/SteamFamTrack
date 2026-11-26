@@ -2,6 +2,7 @@
 
 import { type MouseEvent, useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { CommunityLinksCard } from "@/components/CommunityLinksCard";
 import { ContributionBoard } from "@/components/ContributionBoard";
 import { FamilyLeaderboard } from "@/components/FamilyLeaderboard";
@@ -16,6 +17,10 @@ import { OverlapAndCatalog } from "@/components/OverlapAndCatalog";
 import { RegionSelect } from "@/components/RegionSelect";
 import { SaveFamilyModal } from "@/components/SaveFamilyModal";
 import { SwapSimulator } from "@/components/SwapSimulator";
+import {
+  HeaderThemeSwitcher,
+  ThemeGalleryTab,
+} from "@/components/ThemePicker";
 import {
   FamilyAnalysis,
   FamilyMemberInput,
@@ -39,6 +44,7 @@ import {
   Loader2,
   LogIn,
   LogOut,
+  Palette,
   RefreshCw,
   RotateCcw,
   Save,
@@ -54,7 +60,8 @@ type TabId =
   | "simulator"
   | "history"
   | "checker"
-  | "leaderboard";
+  | "leaderboard"
+  | "themes";
 
 interface NavItem {
   id: TabId;
@@ -107,6 +114,13 @@ const NAV_ITEMS: NavItem[] = [
     sectionTitle: "FAMILY LEADERBOARD & AWARDS",
     icon: Trophy,
   },
+  {
+    id: "themes",
+    index: "07",
+    label: "Themes",
+    sectionTitle: "THEMES & APPEARANCE",
+    icon: Palette,
+  },
 ];
 
 interface MemberWarning {
@@ -147,6 +161,7 @@ export function FamilyDashboard({
   initialHasApiKey,
   initialHasDatabase,
 }: FamilyDashboardProps) {
+  const router = useRouter();
   const [activeTab, setActiveTab] = useState<TabId>("board");
   const [hasApiKey, setHasApiKey] = useState(Boolean(initialHasApiKey));
   const [hasDatabase, setHasDatabase] = useState(
@@ -190,9 +205,30 @@ export function FamilyDashboard({
   const [deletingFamily, setDeletingFamily] = useState(false);
   const [steamUser, setSteamUser] = useState<SteamSessionUser | null>(null);
   const [signingOut, setSigningOut] = useState(false);
+  const [refreshNonce, setRefreshNonce] = useState(0);
 
   const manualLaunchRef = useRef(false);
   const isPreviewModeRef = useRef(false);
+  const noticeTimerRef = useRef<number | null>(null);
+
+  const showNotice = useCallback((message: string) => {
+    if (noticeTimerRef.current !== null) {
+      window.clearTimeout(noticeTimerRef.current);
+    }
+    setNotice(message);
+    noticeTimerRef.current = window.setTimeout(() => {
+      setNotice(null);
+      noticeTimerRef.current = null;
+    }, 3000);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (noticeTimerRef.current !== null) {
+        window.clearTimeout(noticeTimerRef.current);
+      }
+    };
+  }, []);
 
   const hasActiveRoster = members.length > 0;
   const isOwner = !activeSavedFamily
@@ -298,52 +334,17 @@ export function FamilyDashboard({
     };
   }, [initialFamily, loadSavedFamily]);
 
-  const runAnalysis = useCallback(
-    async (
-      nextRegion: SteamRegion,
-      nextIncludeExcluded: boolean,
-      nextMembers: FamilyMemberInput[],
-      nextWaitlist: FamilyMemberInput[]
-    ) => {
-      if (nextMembers.length === 0) return;
-      setLoading(true);
-      setError(null);
-      try {
-        const res = await fetch("/api/analyze", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            mode: "live",
-            region: nextRegion,
-            includeExcluded: nextIncludeExcluded,
-            members: nextMembers,
-            waitlist: nextWaitlist,
-          }),
-        });
-        const data = (await res.json()) as AnalyzeResponse;
-        if (!res.ok || data.error) {
-          throw new Error(data.error ?? `Request failed (${res.status})`);
-        }
-        setAnalysis(data.analysis);
-        setActiveLibraries(data.activeLibraries);
-        setWaitlistLibraries(data.waitlistLibraries);
-        setWarnings(data.warnings ?? []);
-      } catch (err) {
-        setWarnings([]);
-        setError(
-          err instanceof Error ? err.message : "Failed to load family data"
-        );
-      } finally {
-        setLoading(false);
-      }
-    },
-    []
-  );
+  const triggerRefresh = useCallback(() => {
+    if (members.length === 0) return;
+    setLoading(true);
+    setError(null);
+    setRefreshNonce((prev) => prev + 1);
+  }, [members.length]);
 
   useEffect(() => {
     if (members.length === 0) return;
 
-    let cancelled = false;
+    const controller = new AbortController();
     fetch("/api/analyze", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -354,6 +355,7 @@ export function FamilyDashboard({
         members,
         waitlist,
       }),
+      signal: controller.signal,
     })
       .then(async (res) => {
         const data = (await res.json()) as AnalyzeResponse;
@@ -363,7 +365,7 @@ export function FamilyDashboard({
         return data;
       })
       .then((data) => {
-        if (cancelled) return;
+        if (controller.signal.aborted) return;
         setError(null);
         setAnalysis(data.analysis);
         setActiveLibraries(data.activeLibraries);
@@ -372,7 +374,7 @@ export function FamilyDashboard({
         setLoading(false);
       })
       .catch((err) => {
-        if (cancelled) return;
+        if (controller.signal.aborted) return;
         setWarnings([]);
         setError(
           err instanceof Error ? err.message : "Failed to load family data"
@@ -381,9 +383,9 @@ export function FamilyDashboard({
       });
 
     return () => {
-      cancelled = true;
+      controller.abort();
     };
-  }, [region, includeExcluded, members, waitlist]);
+  }, [region, includeExcluded, members, waitlist, refreshNonce]);
 
   const handleLaunchFamily = ({
     region: nextRegion,
@@ -483,8 +485,7 @@ export function FamilyDashboard({
       setMyActiveFamily((prev) =>
         prev?.slug === updatedFamily.slug ? updatedFamily : prev
       );
-      setNotice("Saved member changes to group.");
-      setTimeout(() => setNotice(null), 3000);
+      showNotice("Saved member changes to group.");
     } catch (err) {
       setError(
         err instanceof Error ? err.message : "Failed to save member edits"
@@ -520,8 +521,7 @@ export function FamilyDashboard({
         b.snapshotMonth.localeCompare(a.snapshotMonth)
       );
     });
-    setNotice(`Recorded ${monthKey} snapshot.`);
-    setTimeout(() => setNotice(null), 3000);
+    showNotice(`Recorded ${monthKey} snapshot.`);
   };
 
   const handleDeleteFamily = async () => {
@@ -570,6 +570,13 @@ export function FamilyDashboard({
       setSteamUser(null);
       setMyActiveFamily(null);
       setWaitlistedFamilies([]);
+      if (activeSavedFamily) {
+        if (initialFamily) {
+          router.push("/");
+          return;
+        }
+        enterPreviewSandbox();
+      }
     } catch {
       setError("Failed to sign out of Steam session. Please try again.");
     } finally {
@@ -651,9 +658,15 @@ export function FamilyDashboard({
               href="/"
               onClick={handleBrandClick}
               aria-label={
-                !initialFamily && hasActiveRoster
-                  ? "Return to SteamFamTrack Launchpad"
-                  : "SteamFamTrack Home"
+                initialFamily
+                  ? "SteamFamTrack Home"
+                  : activeSavedFamily
+                    ? `Open ${activeSavedFamily.name} Contribution Board`
+                    : myActiveFamily || waitlistedFamilies.length > 0
+                      ? "Return to your saved Steam Family"
+                      : hasActiveRoster
+                        ? "Return to SteamFamTrack Launchpad"
+                        : "SteamFamTrack Home"
               }
               className="cursor-pointer shrink-0 flex items-center gap-2 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-bt-red"
             >
@@ -666,21 +679,21 @@ export function FamilyDashboard({
               >
                 <polygon
                   points="2,2 50,2 62,14 62,62 2,62"
-                  fill="#08060A"
-                  stroke="#E8002D"
+                  fill="var(--bt-bg)"
+                  stroke="var(--bt-red)"
                   strokeWidth="3"
                 />
-                <polygon points="48,2 62,16 62,2 48,2" fill="#E8002D" />
+                <polygon points="48,2 62,16 62,2 48,2" fill="var(--bt-red)" />
                 <circle
                   cx="40"
                   cy="22"
                   r="7"
-                  stroke="#E8002D"
+                  stroke="var(--bt-red)"
                   strokeWidth="3.2"
                 />
                 <path
                   d="M31 35.5C33.5 32.5 36.8 31 40 31C46.6 31 52 36.2 52 43V45H35"
-                  stroke="#E8002D"
+                  stroke="var(--bt-red)"
                   strokeWidth="3.2"
                   strokeLinecap="round"
                   strokeLinejoin="round"
@@ -689,14 +702,14 @@ export function FamilyDashboard({
                   cx="24"
                   cy="27"
                   r="7.5"
-                  fill="#08060A"
-                  stroke="#FFFFFF"
+                  fill="var(--bt-bg)"
+                  stroke="var(--bt-ink)"
                   strokeWidth="3.4"
                 />
                 <path
                   d="M11 49V46C11 38.8 16.8 34.5 24 34.5C31.2 34.5 37 38.8 37 46V49H11Z"
-                  fill="#08060A"
-                  stroke="#FFFFFF"
+                  fill="var(--bt-bg)"
+                  stroke="var(--bt-ink)"
                   strokeWidth="3.4"
                   strokeLinejoin="round"
                 />
@@ -807,9 +820,7 @@ export function FamilyDashboard({
                 {/* Primary Refresh CTA */}
                 <button
                   type="button"
-                  onClick={() =>
-                    runAnalysis(region, includeExcluded, members, waitlist)
-                  }
+                  onClick={triggerRefresh}
                   disabled={loading}
                   className="cursor-pointer p5-btn inline-flex items-center gap-1.5 bg-bt-red hover:bg-bt-red-hover px-4 py-1.5 font-condensed text-xs font-extrabold uppercase tracking-widest text-white disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-bt-red"
                 >
@@ -825,6 +836,12 @@ export function FamilyDashboard({
                 <span>MAX 6 SLOTS // REAL-TIME STEAM PRICING</span>
               </div>
             )}
+
+            <HeaderThemeSwitcher
+              onOpenThemesTab={
+                hasActiveRoster ? () => setActiveTab("themes") : undefined
+              }
+            />
 
             {steamAuthControl}
           </div>
@@ -1018,10 +1035,10 @@ export function FamilyDashboard({
                       }`}
                     >
                       <span
-                        className={`h-3.5 w-3.5 bg-white transition-transform ${
+                        className={`h-3.5 w-3.5 transition-transform ${
                           includeExcluded
-                            ? "translate-x-[18px]"
-                            : "translate-x-0"
+                            ? "translate-x-[18px] bg-bt-on-accent"
+                            : "translate-x-0 bg-bt-muted"
                         }`}
                       />
                     </button>
@@ -1323,7 +1340,13 @@ export function FamilyDashboard({
               )}
 
               {/* Main View Content */}
-              {loading && !analysis ? (
+              {activeTab === "themes" ? (
+                <ThemeGalleryTab
+                  onThemeApplied={(theme) =>
+                    showNotice(`Theme switched to ${theme.name}.`)
+                  }
+                />
+              ) : loading && !analysis ? (
                 <div className="p5-frame bg-bt-border">
                   <div className="bg-bt-surface flex flex-col items-center justify-center py-24 px-6 gap-3">
                     <Loader2 className="h-7 w-7 animate-spin text-bt-red" />
@@ -1339,7 +1362,10 @@ export function FamilyDashboard({
                       <ContributionBoard analysis={analysis} />
                     )}
                     {activeTab === "overlap" && (
-                      <OverlapAndCatalog analysis={analysis} />
+                      <OverlapAndCatalog
+                        key={`${activeSavedFamily?.slug ?? "preview"}-${region}-${includeExcluded}`}
+                        analysis={analysis}
+                      />
                     )}
                     {activeTab === "simulator" && (
                       <SwapSimulator
@@ -1382,6 +1408,7 @@ export function FamilyDashboard({
                         activeLibraries={activeLibraries}
                         waitlistLibraries={waitlistLibraries}
                         region={region}
+                        includeExcluded={includeExcluded}
                       />
                     )}
                   </>
@@ -1424,8 +1451,7 @@ export function FamilyDashboard({
           setMyActiveFamily(fam);
           setSnapshots(fam.snapshots ?? []);
           setSaveModalOpen(false);
-          setNotice(`Saved "${fam.name}" to your Steam account.`);
-          setTimeout(() => setNotice(null), 3000);
+          showNotice(`Saved "${fam.name}" to your Steam account.`);
         }}
       />
     </div>

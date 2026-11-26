@@ -23,7 +23,17 @@ export async function GET(req: NextRequest) {
   try {
     const region = parseRegion(req.nextUrl.searchParams.get("region"));
     const items = await getPopularSteamDiscounts(region);
-    return NextResponse.json({ region, items });
+    return NextResponse.json(
+      { region, items },
+      {
+        headers: {
+          "Cache-Control":
+            items.length > 0
+              ? "public, s-maxage=300, stale-while-revalidate=600"
+              : "no-store",
+        },
+      }
+    );
   } catch (err) {
     return NextResponse.json(
       {

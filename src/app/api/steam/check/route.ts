@@ -21,12 +21,25 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const body = (await req.json()) as {
-      query?: string;
-      region?: string;
-    };
+    let body: { query?: unknown; region?: unknown };
+    try {
+      const parsed = await req.json();
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+        return NextResponse.json(
+          { error: "Invalid request payload." },
+          { status: 400 }
+        );
+      }
+      body = parsed as { query?: unknown; region?: unknown };
+    } catch {
+      return NextResponse.json(
+        { error: "Invalid JSON body." },
+        { status: 400 }
+      );
+    }
 
-    const query = typeof body.query === "string" ? body.query.trim() : "";
+    const query =
+      typeof body.query === "string" ? body.query.trim().slice(0, 200) : "";
     if (!query) {
       return NextResponse.json(
         { error: "Provide a game name, AppID, or Steam Store URL." },

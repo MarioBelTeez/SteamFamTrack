@@ -2,6 +2,11 @@
 
 import { useMemo } from "react";
 import {
+  buildPowerRankings,
+  summarizeWaitlistLibrary,
+  type TierGrade,
+} from "@/lib/leaderboard";
+import {
   FamilyAnalysis,
   MemberLibrary,
   STEAM_REGIONS,
@@ -23,9 +28,8 @@ interface FamilyLeaderboardProps {
   activeLibraries: MemberLibrary[];
   waitlistLibraries: MemberLibrary[];
   region: SteamRegion;
+  includeExcluded?: boolean;
 }
-
-type TierGrade = "S" | "A" | "B" | "C";
 
 interface AwardCardData {
   id: string;
@@ -40,21 +44,6 @@ interface AwardCardData {
   accent?: "crimson" | "default";
   emptyMessage?: string;
   icon: typeof Crown;
-}
-
-interface PowerRankingEntry {
-  memberId: string;
-  name: string;
-  personaName: string;
-  avatarUrl: string;
-  steamId64: string;
-  role: "ACTIVE" | "WAITLIST";
-  totalGames: number;
-  exclusiveGames: number;
-  totalRawValue: number;
-  sharePercent: number | null;
-  powerScore: number;
-  tier: TierGrade;
 }
 
 function getInitials(name: string): string {
@@ -84,47 +73,6 @@ function formatSignedMoney(val: number, region: SteamRegion): string {
   }
   const sign = val > 0 ? "+" : "-";
   return `${sign}${formatMoney(Math.abs(val), region)}`;
-}
-
-function computePowerScore(
-  totalRawValue: number,
-  exclusiveGames: number,
-  totalGames: number
-): number {
-  return Math.round(totalRawValue + exclusiveGames * 5 + totalGames * 0.5);
-}
-
-function assignTierGrade(score: number, maxScore: number): TierGrade {
-  if (maxScore <= 0 || score <= 0) return "C";
-  const ratio = score / maxScore;
-  if (ratio >= 0.85) return "S";
-  if (ratio >= 0.6) return "A";
-  if (ratio >= 0.35) return "B";
-  return "C";
-}
-
-function summarizeWaitlistLibrary(
-  lib: MemberLibrary,
-  activeAppIds: Set<number>
-): { totalGames: number; exclusiveGames: number; totalRawValue: number } {
-  let totalGames = 0;
-  let exclusiveGames = 0;
-  let totalRawValue = 0;
-
-  for (const game of lib.games) {
-    if (game.familySharingExcluded) continue;
-    totalGames += 1;
-    totalRawValue += game.rawPrice;
-    if (!activeAppIds.has(game.appid)) {
-      exclusiveGames += 1;
-    }
-  }
-
-  return {
-    totalGames,
-    exclusiveGames,
-    totalRawValue: Math.round(totalRawValue * 100) / 100,
-  };
 }
 
 interface MemberAvatarProps {
@@ -182,6 +130,7 @@ export function FamilyLeaderboard({
   activeLibraries,
   waitlistLibraries,
   region,
+  includeExcluded = false,
 }: FamilyLeaderboardProps) {
   const regionConfig = STEAM_REGIONS[region];
 
@@ -221,38 +170,45 @@ export function FamilyLeaderboard({
     if (ids.size === 0) {
       for (const lib of activeLibraries) {
         for (const g of lib.games) {
-          if (!g.familySharingExcluded) {
+          if (includeExcluded || !g.familySharingExcluded) {
             ids.add(g.appid);
           }
         }
       }
     }
     return ids;
-  }, [analysis.catalog, activeLibraries]);
+  }, [analysis.catalog, activeLibraries, includeExcluded]);
 
   const waitlistSummaries = useMemo(() => {
     return waitlistLibraries.map((lib) => {
-      const stats = summarizeWaitlistLibrary(lib, activeAppIds);
+      const stats = summarizeWaitlistLibrary(lib, activeAppIds, includeExcluded);
       return {
         lib,
         ...stats,
       };
     });
-  }, [waitlistLibraries, activeAppIds]);
+  }, [waitlistLibraries, activeAppIds, includeExcluded]);
 
   const awards = useMemo<AwardCardData[]>(() => {
     const members = analysis.members;
 
     const biggestWhale =
       members.length > 0
-        ? [...members].sort((a, b) => b.totalRawValue - a.totalRawValue)[0]
+        ? [...members].sort(
+            (a, b) =>
+              b.totalRawValue - a.totalRawValue ||
+              b.totalGames - a.totalGames ||
+              a.name.localeCompare(b.name)
+          )[0]
         : null;
 
     const libraryKing =
       members.length > 0
         ? [...members].sort(
             (a, b) =>
-              b.totalGames - a.totalGames || b.totalRawValue - a.totalRawValue
+              b.totalGames - a.totalGames ||
+              b.totalRawValue - a.totalRawValue ||
+              a.name.localeCompare(b.name)
           )[0]
         : null;
 
@@ -261,7 +217,8 @@ export function FamilyLeaderboard({
         ? [...members].sort(
             (a, b) =>
               b.exclusiveGames - a.exclusiveGames ||
-              b.exclusiveValue - a.exclusiveValue
+              b.exclusiveValue - a.exclusiveValue ||
+              a.name.localeCompare(b.name)
           )[0]
         : null;
 
@@ -270,23 +227,30 @@ export function FamilyLeaderboard({
     const mostGenerous =
       fairnessMembers
         .filter((m) => m.deltaFromAverageValue > 0.005)
-        .sort((a, b) => b.deltaFromAverageValue - a.deltaFromAverageValue)[0] ??
-      null;
+        .sort(
+          (a, b) =>
+            b.deltaFromAverageValue - a.deltaFromAverageValue ||
+            a.name.localeCompare(b.name)
+        )[0] ?? null;
 
     const targetLocked =
-      fairnessMembers.length > 0
-        ? [...fairnessMembers].sort(
-            (a, b) =>
-              a.deltaFromAverageValue - b.deltaFromAverageValue ||
-              (a.isUpNext === b.isUpNext ? 0 : a.isUpNext ? -1 : 1)
-          )[0]
-        : null;
+      fairnessMembers
+        .filter((m) => m.deltaFromAverageValue < -0.005)
+        .sort(
+          (a, b) =>
+            a.deltaFromAverageValue - b.deltaFromAverageValue ||
+            (a.isUpNext === b.isUpNext ? 0 : a.isUpNext ? -1 : 1) ||
+            a.name.localeCompare(b.name)
+        )[0] ?? null;
 
     const topWaitlist =
       waitlistSummaries.length > 0
         ? [...waitlistSummaries].sort(
             (a, b) =>
-              b.totalRawValue - a.totalRawValue || b.totalGames - a.totalGames
+              b.netNewValue - a.netNewValue ||
+              b.totalRawValue - a.totalRawValue ||
+              b.totalGames - a.totalGames ||
+              a.lib.member.name.localeCompare(b.lib.member.name)
           )[0]
         : null;
 
@@ -386,7 +350,8 @@ export function FamilyLeaderboard({
         index: "AWARD 05",
         title: "TARGET LOCKED (UP NEXT)",
         subtitle: "Most Behind Group Average",
-        winnerName: targetLocked?.name ?? "—",
+        winnerName:
+          targetLocked?.name ?? (members.length > 0 ? "BALANCED" : "—"),
         winnerPersona:
           targetLockedIdentity &&
           targetLocked &&
@@ -396,19 +361,27 @@ export function FamilyLeaderboard({
         avatarUrl: targetLockedIdentity?.avatarUrl ?? "",
         statValue: targetLocked
           ? formatSignedMoney(targetLocked.deltaFromAverageValue, region)
-          : "—",
+          : members.length > 0
+            ? formatMoney(0, region)
+            : "—",
         statLabel: targetLocked
           ? `${targetLocked.sharePercent.toFixed(1)}% OF ${targetLocked.expectedSharePercent.toFixed(1)}% TARGET`
-          : "NO ACTIVE MEMBERS",
+          : members.length > 0
+            ? "NO DEFICIT DETECTED"
+            : "NO ACTIVE MEMBERS",
         accent: "crimson",
-        emptyMessage: targetLocked ? undefined : "No active members",
+        emptyMessage: targetLocked
+          ? undefined
+          : members.length > 0
+            ? "All members near average"
+            : "No active members",
         icon: Crosshair,
       },
       {
         id: "waitlist-challenger",
         index: "AWARD 06",
         title: "WAITLIST CHALLENGER",
-        subtitle: "Strongest Bench Candidate",
+        subtitle: "Strongest Net-New Bench Pick",
         winnerName: topWaitlist ? topWaitlist.lib.member.name : "No Waitlist",
         winnerPersona:
           topWaitlist &&
@@ -417,10 +390,10 @@ export function FamilyLeaderboard({
             : undefined,
         avatarUrl: topWaitlist?.lib.avatarUrl ?? "",
         statValue: topWaitlist
-          ? formatMoney(topWaitlist.totalRawValue, region)
+          ? `+${formatMoney(topWaitlist.netNewValue, region)}`
           : "0 CANDIDATES",
         statLabel: topWaitlist
-          ? `${topWaitlist.totalGames.toLocaleString()} GAMES · +${topWaitlist.exclusiveGames.toLocaleString()} NET NEW`
+          ? `+${topWaitlist.exclusiveGames.toLocaleString()} NEW · ${formatMoney(topWaitlist.totalRawValue, region)} TOTAL`
           : "ADD WAITLIST TO COMPARE",
         emptyMessage: topWaitlist ? undefined : "No Waitlist",
         icon: Swords,
@@ -434,61 +407,16 @@ export function FamilyLeaderboard({
     region,
   ]);
 
-  const rankings = useMemo<PowerRankingEntry[]>(() => {
-    const rawEntries: Array<Omit<PowerRankingEntry, "tier">> = [
-      ...analysis.members.map((m) => {
-        const fallback = memberIdentityById.get(m.memberId);
-        return {
-          memberId: m.memberId,
-          name: m.name,
-          personaName: m.personaName || fallback?.personaName || m.name,
-          avatarUrl: m.avatarUrl || fallback?.avatarUrl || "",
-          steamId64: m.steamId64 || fallback?.steamId64 || "",
-          role: "ACTIVE" as const,
-          totalGames: m.totalGames,
-          exclusiveGames: m.exclusiveGames,
-          totalRawValue: m.totalRawValue,
-          sharePercent: m.sharePercent,
-          powerScore: computePowerScore(
-            m.totalRawValue,
-            m.exclusiveGames,
-            m.totalGames
-          ),
-        };
-      }),
-      ...waitlistSummaries.map((w) => ({
-        memberId: w.lib.member.id,
-        name: w.lib.member.name,
-        personaName: w.lib.personaName || w.lib.member.name,
-        avatarUrl: w.lib.avatarUrl,
-        steamId64: w.lib.steamId64,
-        role: "WAITLIST" as const,
-        totalGames: w.totalGames,
-        exclusiveGames: w.exclusiveGames,
-        totalRawValue: w.totalRawValue,
-        sharePercent: null,
-        powerScore: computePowerScore(
-          w.totalRawValue,
-          w.exclusiveGames,
-          w.totalGames
-        ),
-      })),
-    ];
-
-    rawEntries.sort(
-      (a, b) =>
-        b.powerScore - a.powerScore ||
-        b.totalRawValue - a.totalRawValue ||
-        a.name.localeCompare(b.name)
-    );
-
-    const maxScore = rawEntries[0]?.powerScore ?? 0;
-
-    return rawEntries.map((entry) => ({
-      ...entry,
-      tier: assignTierGrade(entry.powerScore, maxScore),
-    }));
-  }, [analysis.members, waitlistSummaries, memberIdentityById]);
+  const rankings = useMemo(
+    () =>
+      buildPowerRankings(
+        analysis,
+        waitlistSummaries,
+        memberIdentityById,
+        region
+      ),
+    [analysis, waitlistSummaries, memberIdentityById, region]
+  );
 
   return (
     <div className="space-y-6">
@@ -648,7 +576,7 @@ export function FamilyLeaderboard({
                   Family Power Rankings
                 </h2>
                 <p className="mt-0.5 font-mono text-[11px] uppercase tracking-[0.14em] text-bt-muted">
-                  Composite score = Value + (Excl. &times; 5) + (Games &times; 0.5)
+                  Composite score = USD-Normalized Value + (Excl. &times; 5) + (Games &times; 0.5)
                 </p>
               </div>
             </div>

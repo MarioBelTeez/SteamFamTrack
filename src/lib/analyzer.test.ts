@@ -2,9 +2,8 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import type { GameInfo, MemberLibrary } from "./types";
 
-const { analyzeFamily, computeSlotCooldown, simulateSwap } = (await import(
-  `./analyzer${".ts"}`
-)) as typeof import("./analyzer");
+const { analyzeFamily, computeSlotCooldown, findBestSwapPair, simulateSwap } =
+  (await import(`./analyzer${".ts"}`)) as typeof import("./analyzer");
 
 function makeGame(
   appid: number,
@@ -197,5 +196,54 @@ describe("simulateSwap", () => {
     assert.equal(charlieDelta.beforePct, 0);
     assert.equal(charlieDelta.afterPct, 26.32);
     assert.equal(charlieDelta.deltaPct, 26.32);
+  });
+});
+
+describe("findBestSwapPair", () => {
+  it("returns null when active or waitlist is empty", () => {
+    const alice = makeLibrary("1", "Alice", [makeGame(1, "Game", 20)]);
+    assert.equal(findBestSwapPair([], [alice]), null);
+    assert.equal(findBestSwapPair([alice], []), null);
+  });
+
+  it("matches brute-force simulateSwap best pair and respects includeExcluded", () => {
+    const shared = makeGame(1, "Portal 2", 10);
+    const aliceExclusive = makeGame(2, "Cyberpunk 2077", 60);
+    const bobExclusive = makeGame(3, "Celeste", 20);
+    const bobExcluded = makeGame(4, "GTA V", 80, true);
+    const charlieNew = makeGame(5, "Elden Ring", 50);
+    const daveNew = makeGame(6, "Hades", 25);
+
+    const alice = makeLibrary("1", "Alice", [shared, aliceExclusive]);
+    const bob = makeLibrary("2", "Bob", [shared, bobExclusive, bobExcluded]);
+    const charlie = makeLibrary("3", "Charlie", [shared, charlieNew]);
+    const dave = makeLibrary("4", "Dave", [daveNew]);
+
+    const bestExcludedOff = findBestSwapPair(
+      [alice, bob],
+      [charlie, dave],
+      false
+    );
+    assert.ok(bestExcludedOff);
+    assert.equal(bestExcludedOff.removeId, "2");
+    assert.equal(bestExcludedOff.addId, "3");
+    assert.equal(bestExcludedOff.uniqueValueDelta, 30);
+    assert.equal(bestExcludedOff.uniqueGamesDelta, 0);
+
+    const sim = simulateSwap([alice, bob], "2", charlie, "us", false);
+    assert.ok(sim);
+    assert.equal(bestExcludedOff.uniqueValueDelta, sim.uniqueValueDelta);
+    assert.equal(bestExcludedOff.uniqueGamesDelta, sim.uniqueGamesDelta);
+
+    // With includeExcluded=true, Bob's $80 excluded game counts so removing Alice ($60 loss) beats removing Bob ($100 loss)
+    const bestExcludedOn = findBestSwapPair(
+      [alice, bob],
+      [charlie, dave],
+      true
+    );
+    assert.ok(bestExcludedOn);
+    assert.equal(bestExcludedOn.removeId, "1");
+    assert.equal(bestExcludedOn.addId, "3");
+    assert.equal(bestExcludedOn.uniqueValueDelta, -10);
   });
 });

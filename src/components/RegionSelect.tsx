@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { type KeyboardEvent as ReactKeyboardEvent, useEffect, useId, useRef, useState } from "react";
 import { STEAM_REGIONS, SteamRegion } from "@/lib/types";
 import { ChevronDown } from "lucide-react";
 
@@ -118,35 +118,79 @@ export function RegionSelect({
 }: RegionSelectProps) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement | null>(null);
-  const current = STEAM_REGIONS[value];
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
+  const optionRefs = useRef<Array<HTMLButtonElement | null>>([]);
+  const listboxId = useId();
+  const options = Object.values(STEAM_REGIONS);
+  const current = STEAM_REGIONS[value] ?? STEAM_REGIONS.us;
 
   useEffect(() => {
     if (!open) return;
 
-    function handlePointerDown(e: MouseEvent) {
+    const selectedIdx = Math.max(
+      0,
+      options.findIndex((r) => r.code === current.code)
+    );
+    optionRefs.current[selectedIdx]?.focus();
+
+    function handlePointerDown(e: PointerEvent) {
       if (rootRef.current && !rootRef.current.contains(e.target as Node)) {
         setOpen(false);
       }
     }
     function handleKeyDown(e: KeyboardEvent) {
-      if (e.key === "Escape") setOpen(false);
+      if (e.key === "Escape") {
+        setOpen(false);
+        triggerRef.current?.focus();
+      }
     }
 
-    window.addEventListener("mousedown", handlePointerDown);
+    window.addEventListener("pointerdown", handlePointerDown);
     window.addEventListener("keydown", handleKeyDown);
     return () => {
-      window.removeEventListener("mousedown", handlePointerDown);
+      window.removeEventListener("pointerdown", handlePointerDown);
       window.removeEventListener("keydown", handleKeyDown);
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
+
+  const handleOptionKeyDown = (
+    idx: number,
+    e: ReactKeyboardEvent<HTMLButtonElement>
+  ) => {
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      optionRefs.current[(idx + 1) % options.length]?.focus();
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      optionRefs.current[(idx - 1 + options.length) % options.length]?.focus();
+    } else if (e.key === "Home") {
+      e.preventDefault();
+      optionRefs.current[0]?.focus();
+    } else if (e.key === "End") {
+      e.preventDefault();
+      optionRefs.current[options.length - 1]?.focus();
+    } else if (e.key === "Tab") {
+      setOpen(false);
+    }
+  };
 
   return (
     <div ref={rootRef} className="relative">
       <button
+        ref={triggerRef}
         type="button"
         aria-label={ariaLabel}
+        aria-haspopup="listbox"
         aria-expanded={open}
+        aria-controls={open ? listboxId : undefined}
         onClick={() => setOpen((prev) => !prev)}
+        onKeyDown={(e) => {
+          if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+            e.preventDefault();
+            setOpen(true);
+          }
+        }}
         className={`cursor-pointer inline-flex items-center justify-between gap-2 bg-bt-bg border border-bt-border font-mono text-xs text-white hover:border-bt-red transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-bt-red ${
           compact ? "px-2.5 py-1.5" : "px-3 py-1.5"
         }`}
@@ -164,25 +208,31 @@ export function RegionSelect({
 
       {open && (
         <div
+          id={listboxId}
           role="listbox"
           aria-label={ariaLabel}
-          className="absolute right-0 z-50 mt-1.5 min-w-[215px] border border-bt-red/70 bg-bt-surface shadow-2xl py-1"
+          className="absolute left-0 sm:left-auto sm:right-0 z-50 mt-1.5 min-w-[215px] border border-bt-red/70 bg-bt-surface shadow-2xl py-1"
         >
-          {Object.values(STEAM_REGIONS).map((r) => {
-            const selected = r.code === value;
+          {options.map((r, idx) => {
+            const selected = r.code === current.code;
             return (
               <button
                 key={r.code}
+                ref={(el) => {
+                  optionRefs.current[idx] = el;
+                }}
                 type="button"
                 role="option"
                 aria-selected={selected}
+                onKeyDown={(e) => handleOptionKeyDown(idx, e)}
                 onClick={() => {
                   setOpen(false);
-                  if (r.code !== value) {
+                  triggerRef.current?.focus();
+                  if (r.code !== current.code) {
                     onChange(r.code);
                   }
                 }}
-                className={`cursor-pointer w-full flex items-center justify-between gap-2.5 px-3 py-2 text-left font-mono text-xs transition-colors ${
+                className={`cursor-pointer w-full flex items-center justify-between gap-2.5 px-3 py-2 text-left font-mono text-xs transition-colors focus-visible:outline-none focus-visible:bg-bt-elevated focus-visible:text-white ${
                   selected
                     ? "bg-bt-red/20 text-white border-l-2 border-l-bt-red"
                     : "text-bt-muted hover:bg-bt-elevated hover:text-white"

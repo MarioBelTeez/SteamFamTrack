@@ -10,6 +10,17 @@ const REGION_TO_COUNTRY_CODE: Record<SteamRegion, string> = {
 };
 
 const FAMILY_SHARING_CATEGORY_ID = 62;
+const UPSTREAM_TIMEOUT_MS = 10_000;
+
+async function fetchWithTimeout(
+  url: string,
+  timeoutMs: number = UPSTREAM_TIMEOUT_MS
+): Promise<Response> {
+  return fetch(url, {
+    cache: "no-store",
+    signal: AbortSignal.timeout(timeoutMs),
+  });
+}
 
 export interface GameSearchAlternative {
   appid: number;
@@ -63,7 +74,7 @@ export async function searchSteamStore(
     term
   )}&l=english&cc=${cc}`;
 
-  const res = await fetch(url, { cache: "no-store" });
+  const res = await fetchWithTimeout(url);
   if (!res.ok) {
     throw new Error(`Steam Store search failed (${res.status})`);
   }
@@ -102,7 +113,7 @@ export async function checkSteamGame(opts: {
   }
 
   const detailsUrl = `https://store.steampowered.com/api/appdetails?appids=${appid}&cc=${cc}&l=english`;
-  const res = await fetch(detailsUrl, { cache: "no-store" });
+  const res = await fetchWithTimeout(detailsUrl);
   if (!res.ok) {
     throw new Error(`Steam appdetails failed (${res.status})`);
   }
@@ -198,10 +209,22 @@ export interface FamilyWishlistGame extends EnrichedStoreGame {
 }
 
 const DISCOUNTS_CACHE_TTL_MS = 15 * 60 * 1000;
+const WISHLIST_CACHE_TTL_MS = 5 * 60 * 1000;
 const discountsCache = new Map<
   SteamRegion,
   { items: EnrichedStoreGame[]; expiresAt: number }
 >();
+const discountsInFlight = new Map<SteamRegion, Promise<EnrichedStoreGame[]>>();
+const memberWishlistCache = new Map<
+  string,
+  { items: Array<{ appid: number; priority: number }>; expiresAt: number }
+>();
+
+export function clearSteamCheckCaches(): void {
+  discountsCache.clear();
+  discountsInFlight.clear();
+  memberWishlistCache.clear();
+}
 
 export async function fetchStoreBrowseItems(
   appids: number[],
@@ -231,7 +254,7 @@ export async function fetchStoreBrowseItems(
   const url = `https://api.steampowered.com/IStoreBrowseService/GetItems/v1/?input_json=${encodeURIComponent(
     inputJson
   )}`;
-  const res = await fetch(url, { cache: "no-store" });
+  const res = await fetchWithTimeout(url);
   if (!res.ok) {
     throw new Error(`Steam StoreBrowse failed (${res.status})`);
   }
@@ -241,6 +264,8 @@ export async function fetchStoreBrowseItems(
       store_items?: Array<{
         appid?: number;
         id?: number;
+        success?: number;
+        visible?: boolean;
         name?: string;
         is_free?: boolean | null;
         best_purchase_option?: {
@@ -263,8 +288,13 @@ export async function fetchStoreBrowseItems(
   };
 
   for (const item of json.response?.store_items ?? []) {
+    if (typeof item.success === "number" && item.success !== 1) continue;
+    if (item.visible === false) continue;
+
     const appid = Number(item.appid ?? item.id);
     if (!Number.isFinite(appid) || appid <= 0) continue;
+    const name = item.name?.trim();
+    if (!name) continue;
 
     const isFree = Boolean(item.is_free);
     const cats = [
@@ -290,7 +320,7 @@ export async function fetchStoreBrowseItems(
 
     result.set(appid, {
       appid,
-      name: item.name || `App ${appid}`,
+      name,
       headerImage,
       storeUrl: `https://store.steampowered.com/app/${appid}/`,
       isFree,
@@ -313,51 +343,128 @@ export async function getPopularSteamDiscounts(
     return cached.items;
   }
 
-  const cc = REGION_TO_COUNTRY_CODE[region] ?? "US";
-  let appids: number[] = [];
+  const pending = discountsInFlight.get(region);
+  if (pending) {
+    return pending;
+  }
 
-  try {
-    const searchUrl = `https://store.steampowered.com/search/results/?specials=1&filter=topsellers&json=1&cc=${cc}`;
-    const res = await fetch(searchUrl, { cache: "no-store" });
-    if (res.ok) {
-      const data = (await res.json()) as {
-        items?: Array<{ name?: string; logo?: string }>;
-      };
-      appids = (data.items ?? [])
-        .map((it) => {
+  const work = (async (): Promise<EnrichedStoreGame[]> => {
+    const cc = REGION_TO_COUNTRY_CODE[region] ?? "US";
+    const appIdSet = new Set<number>();
+
+    try {
+      const searchUrl = `https://store.steampowered.com/search/results/?specials=1&filter=topsellers&json=1&cc=${cc}`;
+      const res = await fetchWithTimeout(searchUrl);
+      if (res.ok) {
+        const data = (await res.json()) as {
+          items?: Array<{ name?: string; logo?: string }>;
+        };
+        for (const it of data.items ?? []) {
           const match = it.logo?.match(/\/apps\/(\d+)\//i);
-          return match ? Number(match[1]) : 0;
-        })
-        .filter((id) => id > 0);
+          const id = match ? Number(match[1]) : 0;
+          if (id > 0) appIdSet.add(id);
+        }
+      }
+    } catch {
+      // Fallback below
     }
-  } catch {
-    // Fallback below
-  }
 
-  if (appids.length === 0) {
-    const fcUrl = `https://store.steampowered.com/api/featuredcategories/?cc=${cc}&l=english`;
-    const fcRes = await fetch(fcUrl, { cache: "no-store" });
-    if (fcRes.ok) {
-      const fc = (await fcRes.json()) as {
-        specials?: { items?: Array<{ id?: number }> };
-      };
-      appids = (fc.specials?.items ?? [])
-        .map((it) => Number(it.id ?? 0))
-        .filter((id) => id > 0);
+    if (appIdSet.size === 0) {
+      try {
+        const fcUrl = `https://store.steampowered.com/api/featuredcategories/?cc=${cc}&l=english`;
+        const fcRes = await fetchWithTimeout(fcUrl);
+        if (fcRes.ok) {
+          const fc = (await fcRes.json()) as {
+            specials?: { items?: Array<{ id?: number }> };
+          };
+          for (const it of fc.specials?.items ?? []) {
+            const id = Number(it.id ?? 0);
+            if (id > 0) appIdSet.add(id);
+          }
+        }
+      } catch {
+        // Leave empty so caller handles gracefully without caching failure
+      }
     }
-  }
 
-  const enrichedMap = await fetchStoreBrowseItems(appids.slice(0, 48), region);
-  const items = appids
-    .map((id) => enrichedMap.get(id))
-    .filter(
-      (item): item is EnrichedStoreGame =>
-        Boolean(item) && (item!.discountPercent > 0 || Boolean(item!.finalFormatted))
+    const uniqueAppIds = Array.from(appIdSet).slice(0, 48);
+    if (uniqueAppIds.length === 0) {
+      return [];
+    }
+
+    const enrichedMap = await fetchStoreBrowseItems(uniqueAppIds, region);
+    const enrichedOrdered = uniqueAppIds
+      .map((id) => enrichedMap.get(id))
+      .filter((item): item is EnrichedStoreGame => Boolean(item));
+
+    const discountedOnly = enrichedOrdered.filter(
+      (item) => item.discountPercent > 0
     );
+    const items =
+      discountedOnly.length > 0
+        ? discountedOnly
+        : enrichedOrdered.filter((item) => Boolean(item.finalFormatted));
 
-  discountsCache.set(region, {
+    if (items.length > 0) {
+      discountsCache.set(region, {
+        items,
+        expiresAt: Date.now() + DISCOUNTS_CACHE_TTL_MS,
+      });
+    }
+
+    return items;
+  })();
+
+  discountsInFlight.set(region, work);
+  try {
+    return await work;
+  } finally {
+    if (discountsInFlight.get(region) === work) {
+      discountsInFlight.delete(region);
+    }
+  }
+}
+
+async function fetchMemberWishlistItems(
+  steamId64: string
+): Promise<Array<{ appid: number; priority: number }>> {
+  const now = Date.now();
+  const cached = memberWishlistCache.get(steamId64);
+  if (cached && cached.expiresAt > now) {
+    return cached.items;
+  }
+
+  if (memberWishlistCache.size > 300) {
+    for (const [key, entry] of memberWishlistCache) {
+      if (entry.expiresAt <= now) {
+        memberWishlistCache.delete(key);
+      }
+    }
+  }
+
+  const url = `https://api.steampowered.com/IWishlistService/GetWishlist/v1/?steamid=${encodeURIComponent(
+    steamId64
+  )}`;
+  const res = await fetchWithTimeout(url);
+  if (!res.ok) {
+    throw new Error(`HTTP ${res.status}`);
+  }
+  const data = (await res.json()) as {
+    response?: {
+      items?: Array<{ appid?: number; priority?: number }>;
+    };
+  };
+
+  const items = (data.response?.items ?? [])
+    .map((item) => ({
+      appid: Number(item.appid ?? 0),
+      priority: Number(item.priority ?? 0),
+    }))
+    .filter((item) => Number.isFinite(item.appid) && item.appid > 0);
+
+  memberWishlistCache.set(steamId64, {
     items,
-    expiresAt: Date.now() + DISCOUNTS_CACHE_TTL_MS,
+    expiresAt: now + WISHLIST_CACHE_TTL_MS,
   });
 
   return items;
@@ -377,24 +484,10 @@ export async function getFamilyWishlists(opts: {
   >();
 
   const settled = await Promise.allSettled(
-    opts.members.map(async (member) => {
-      const url = `https://api.steampowered.com/IWishlistService/GetWishlist/v1/?steamid=${encodeURIComponent(
-        member.steamId64
-      )}`;
-      const res = await fetch(url, { cache: "no-store" });
-      if (!res.ok) {
-        throw new Error(`HTTP ${res.status}`);
-      }
-      const data = (await res.json()) as {
-        response?: {
-          items?: Array<{ appid?: number; priority?: number }>;
-        };
-      };
-      return {
-        member,
-        items: data.response?.items ?? [],
-      };
-    })
+    opts.members.map(async (member) => ({
+      member,
+      items: await fetchMemberWishlistItems(member.steamId64),
+    }))
   );
 
   settled.forEach((outcome, idx) => {
@@ -405,18 +498,16 @@ export async function getFamilyWishlists(opts: {
     }
 
     for (const item of outcome.value.items) {
-      const appid = Number(item.appid ?? 0);
-      if (!appid) continue;
+      const appid = item.appid;
       const existing = wishMap.get(appid) ?? {
         wishedBy: [],
-        minPriority: 9999,
+        minPriority: Number.POSITIVE_INFINITY,
       };
       if (!existing.wishedBy.some((w) => w.steamId64 === member.steamId64)) {
         existing.wishedBy.push(member);
       }
-      const prio = Number(item.priority ?? 999);
-      if (prio > 0 && prio < existing.minPriority) {
-        existing.minPriority = prio;
+      if (item.priority > 0 && item.priority < existing.minPriority) {
+        existing.minPriority = item.priority;
       }
       wishMap.set(appid, existing);
     }
@@ -426,10 +517,15 @@ export async function getFamilyWishlists(opts: {
     .sort(
       (a, b) =>
         b[1].wishedBy.length - a[1].wishedBy.length ||
-        a[1].minPriority - b[1].minPriority
+        a[1].minPriority - b[1].minPriority ||
+        a[0] - b[0]
     )
     .slice(0, 48)
     .map(([appid]) => appid);
+
+  if (sortedAppIds.length === 0) {
+    return { items: [], privateMembers };
+  }
 
   const enrichedMap = await fetchStoreBrowseItems(sortedAppIds, opts.region);
   const items: FamilyWishlistGame[] = [];

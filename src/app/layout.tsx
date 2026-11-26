@@ -6,6 +6,7 @@ import {
   Inter,
 } from "next/font/google";
 import "./globals.css";
+import { buildThemeInitScript } from "@/lib/themes";
 
 const bebasNeue = Bebas_Neue({
   weight: "400",
@@ -31,7 +32,7 @@ const inter = Inter({
 });
 
 const siteUrl =
-  process.env.NEXT_PUBLIC_SITE_URL || "https://steam-fam-track-zdp6.vercel.app";
+  process.env.NEXT_PUBLIC_SITE_URL || "https://steamft.com";
 
 const siteTitle = "SteamFamTrack — Steam Family Contribution & Swap Analyzer";
 const siteDescription =
@@ -72,9 +73,18 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html
       lang="en"
+      data-theme="belteez-crimson"
+      data-theme-mode="dark"
+      data-theme-on-accent="light"
+      suppressHydrationWarning
       className={`${bebasNeue.variable} ${barlowCondensed.variable} ${dmMono.variable} ${inter.variable} h-full dark`}
     >
-      <body className="min-h-full flex flex-col bg-bt-bg text-white antialiased selection:bg-bt-red selection:text-white">
+      <head>
+        <script
+          dangerouslySetInnerHTML={{ __html: buildThemeInitScript() }}
+        />
+      </head>
+      <body className="min-h-full flex flex-col bg-bt-bg text-bt-ink antialiased selection:bg-bt-red selection:text-bt-on-accent">
         {children}
       </body>
     </html>

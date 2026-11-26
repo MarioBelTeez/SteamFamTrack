@@ -1,7 +1,15 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
-import { FamilyAnalysis } from "@/lib/types";
+import {
+  memo,
+  useCallback,
+  useDeferredValue,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import { CatalogEntry, FamilyAnalysis, SteamRegion } from "@/lib/types";
 import {
   ArrowUpDown,
   ExternalLink,
@@ -26,6 +34,19 @@ type ViewMode = "grid" | "list";
 const PAGE_SIZE = 24;
 const HEATMAP_LEGEND_STEPS = [0, 0.14, 0.28, 0.46, 0.65] as const;
 
+function formatCatalogPrice(
+  val: number,
+  sym: string,
+  region: SteamRegion,
+  isFree?: boolean
+): string {
+  if (isFree || val === 0) return "FREE";
+  if (region === "jp") {
+    return `${sym}${Math.round(val).toLocaleString()}`;
+  }
+  return `${sym}${val.toFixed(2)}`;
+}
+
 interface SteamHeaderArtProps {
   src: string;
   alt: string;
@@ -33,7 +54,12 @@ interface SteamHeaderArtProps {
   variant: "card" | "thumb";
 }
 
-function SteamHeaderArt({ src, alt, appid, variant }: SteamHeaderArtProps) {
+const SteamHeaderArt = memo(function SteamHeaderArt({
+  src,
+  alt,
+  appid,
+  variant,
+}: SteamHeaderArtProps) {
   const [failed, setFailed] = useState(false);
 
   if (!src || failed) {
@@ -61,6 +87,7 @@ function SteamHeaderArt({ src, alt, appid, variant }: SteamHeaderArtProps) {
       src={src}
       alt={alt}
       loading="lazy"
+      decoding="async"
       onError={() => setFailed(true)}
       className={
         variant === "card"
@@ -69,19 +96,485 @@ function SteamHeaderArt({ src, alt, appid, variant }: SteamHeaderArtProps) {
       }
     />
   );
+});
+
+interface OverlapMatrixProps {
+  analysis: FamilyAnalysis;
+  effectiveMemberFilter: string;
+  onToggleMemberFilter: (memberId: string) => void;
 }
+
+/**
+ * Isolated heatmap component so hovering cells never re-renders the catalog grid below.
+ */
+const OverlapMatrix = memo(function OverlapMatrix({
+  analysis,
+  effectiveMemberFilter,
+  onToggleMemberFilter,
+}: OverlapMatrixProps) {
+  const [hoveredCell, setHoveredCell] = useState<{
+    rowId: string;
+    colId: string;
+  } | null>(null);
+
+  const maxOffDiagonal = useMemo(() => {
+    let max = 1;
+    for (const mA of analysis.members) {
+      for (const mB of analysis.members) {
+        if (mA.memberId === mB.memberId) continue;
+        const val = analysis.overlapMatrix[mA.memberId]?.[mB.memberId] ?? 0;
+        if (val > max) max = val;
+      }
+    }
+    return max;
+  }, [analysis]);
+
+  const hoveredSummary = useMemo(() => {
+    if (!hoveredCell) return null;
+    const row = analysis.members.find((m) => m.memberId === hoveredCell.rowId);
+    const col = analysis.members.find((m) => m.memberId === hoveredCell.colId);
+    if (!row || !col) return null;
+    const count = analysis.overlapMatrix[row.memberId]?.[col.memberId] ?? 0;
+    if (row.memberId === col.memberId) {
+      return `${row.name.toUpperCase()} // ${count} ELIGIBLE`;
+    }
+    return `${row.name.toUpperCase()} × ${col.name.toUpperCase()} // ${count} SHARED`;
+  }, [analysis.members, analysis.overlapMatrix, hoveredCell]);
+
+  return (
+    <section className="p5-frame bg-bt-border">
+      <div className="bg-bt-surface overflow-hidden">
+        <div className="border-b border-bt-border bg-bt-elevated/50 px-5 py-4 flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+          <div className="space-y-1">
+            <div className="flex flex-wrap items-center gap-2.5">
+              <span className="h-4 w-1 bg-bt-red" aria-hidden="true" />
+              <Grid3X3 className="h-4 w-4 text-bt-red" />
+              <h2 className="font-condensed text-xl font-bold uppercase tracking-wider text-white">
+                Library Overlap Matrix
+              </h2>
+              <span className="p5-tag inline-flex items-center bg-bt-bg border border-bt-border px-2 py-0.5 font-mono text-[10px] font-semibold uppercase tracking-wider text-bt-muted">
+                <span className="p5-unskew tabular-nums">
+                  {analysis.members.length}×{analysis.members.length} TELEMETRY
+                </span>
+              </span>
+            </div>
+            <p className="text-xs text-bt-muted">
+              Diagonal cells show each member&apos;s total eligible titles; off-diagonal cells map shared overlap between pairs.
+            </p>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-4">
+            {hoveredSummary && (
+              <div className="border border-bt-red/40 bg-bt-bg px-2.5 py-1 font-mono text-[11px] font-medium tracking-wider text-white tabular-nums">
+                {hoveredSummary}
+              </div>
+            )}
+
+            <div
+              className="flex items-center gap-2 border border-bt-border bg-bt-bg px-3 py-1.5"
+              aria-label="Overlap intensity legend"
+            >
+              <span className="font-mono text-[10px] uppercase tracking-wider text-bt-dim">
+                0
+              </span>
+              <div className="flex items-center gap-1">
+                {HEATMAP_LEGEND_STEPS.map((alpha) => (
+                  <span
+                    key={alpha}
+                    className="h-3 w-4 border border-bt-border/80"
+                    style={{
+                      backgroundColor:
+                        alpha === 0
+                          ? "var(--bt-elevated)"
+                          : `rgb(var(--bt-accent-rgb) / ${alpha})`,
+                    }}
+                  />
+                ))}
+              </div>
+              <span className="font-mono text-[10px] uppercase tracking-wider text-bt-red font-semibold">
+                HIGH OVERLAP
+              </span>
+            </div>
+          </div>
+        </div>
+
+        <div
+          className="tier-rail overflow-x-auto p-4 sm:p-5"
+          onMouseLeave={() => setHoveredCell(null)}
+        >
+          <table className="w-full border-separate border-spacing-1 text-xs">
+            <thead>
+              <tr>
+                <th className="px-3 py-2 text-left font-mono text-[10px] uppercase tracking-widest text-bt-dim">
+                  Member
+                </th>
+                {analysis.members.map((col) => {
+                  const isColHighlighted = hoveredCell?.colId === col.memberId;
+                  const isFilteredMember =
+                    effectiveMemberFilter === col.memberId;
+                  return (
+                    <th
+                      key={col.memberId}
+                      className="px-2 py-2 text-center min-w-[82px]"
+                    >
+                      <button
+                        type="button"
+                        onClick={() => onToggleMemberFilter(col.memberId)}
+                        title={`Filter catalog by ${col.name}`}
+                        className={`w-full cursor-pointer px-1.5 py-1 font-condensed text-sm font-bold uppercase tracking-wider transition-colors ${
+                          isFilteredMember
+                            ? "bg-bt-red text-white"
+                            : isColHighlighted
+                              ? "bg-bt-elevated text-white"
+                              : "text-bt-muted hover:text-white"
+                        }`}
+                      >
+                        <span className="block truncate">{col.name}</span>
+                      </button>
+                    </th>
+                  );
+                })}
+              </tr>
+            </thead>
+            <tbody>
+              {analysis.members.map((row) => {
+                const isRowHighlighted = hoveredCell?.rowId === row.memberId;
+                const isFilteredMember = effectiveMemberFilter === row.memberId;
+                return (
+                  <tr key={row.memberId}>
+                    <td className="pr-2 py-0.5 whitespace-nowrap">
+                      <button
+                        type="button"
+                        onClick={() => onToggleMemberFilter(row.memberId)}
+                        title={`Filter catalog by ${row.name}`}
+                        className={`flex w-full cursor-pointer items-center gap-2 px-2.5 py-2 text-left font-condensed text-sm font-bold uppercase tracking-wider transition-colors ${
+                          isFilteredMember
+                            ? "bg-bt-red text-white"
+                            : isRowHighlighted
+                              ? "bg-bt-elevated text-white"
+                              : "text-white hover:bg-bt-elevated/60"
+                        }`}
+                      >
+                        <span
+                          className={`h-2 w-2 shrink-0 ${
+                            isFilteredMember
+                              ? "bg-bt-on-accent"
+                              : isRowHighlighted
+                                ? "bg-bt-red"
+                                : "bg-bt-border"
+                          }`}
+                        />
+                        <span>{row.name}</span>
+                      </button>
+                    </td>
+                    {analysis.members.map((col) => {
+                      const count =
+                        analysis.overlapMatrix[row.memberId]?.[col.memberId] ??
+                        0;
+                      const isDiag = row.memberId === col.memberId;
+                      const isHovered =
+                        hoveredCell?.rowId === row.memberId &&
+                        hoveredCell?.colId === col.memberId;
+                      const isCrosshair =
+                        !isHovered &&
+                        (hoveredCell?.rowId === row.memberId ||
+                          hoveredCell?.colId === col.memberId);
+                      const intensity =
+                        isDiag || count === 0
+                          ? 0
+                          : Math.min(1, count / maxOffDiagonal);
+                      const accentAlpha = 0.1 + intensity * 0.52;
+
+                      return (
+                        <td
+                          key={col.memberId}
+                          className="p-0 text-center"
+                          onMouseEnter={() =>
+                            setHoveredCell({
+                              rowId: row.memberId,
+                              colId: col.memberId,
+                            })
+                          }
+                        >
+                          <div
+                            title={
+                              isDiag
+                                ? `${row.name}: ${count} total eligible games`
+                                : `${row.name} & ${col.name}: ${count} shared games`
+                            }
+                            className={`py-2.5 px-2 font-mono text-xs tabular-nums border transition-colors ${
+                              isDiag
+                                ? "bg-bt-elevated border-bt-border border-b-2 border-b-bt-red font-bold text-white"
+                                : count === 0
+                                  ? "bg-bt-bg/70 border-bt-border/70 font-medium text-bt-dim"
+                                  : "font-semibold text-white"
+                            } ${
+                              isHovered
+                                ? "ring-1 ring-inset ring-bt-ink/80"
+                                : isCrosshair
+                                  ? "ring-1 ring-inset ring-bt-red/35"
+                                  : ""
+                            }`}
+                            style={
+                              isDiag || count === 0
+                                ? undefined
+                                : {
+                                    backgroundColor: `rgb(var(--bt-accent-rgb) / ${accentAlpha.toFixed(3)})`,
+                                    borderColor: `rgb(var(--bt-accent-rgb) / ${(
+                                      0.24 +
+                                      intensity * 0.48
+                                    ).toFixed(3)})`,
+                                  }
+                            }
+                          >
+                            {isDiag ? count : count === 0 ? "—" : count}
+                          </div>
+                        </td>
+                      );
+                    })}
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+  );
+});
+
+interface CatalogCardProps {
+  entry: CatalogEntry;
+  sym: string;
+  region: SteamRegion;
+  effectiveMemberFilter: string;
+  onToggleMemberFilter: (memberId: string) => void;
+}
+
+const CatalogGridCard = memo(function CatalogGridCard({
+  entry,
+  sym,
+  region,
+  effectiveMemberFilter,
+  onToggleMemberFilter,
+}: CatalogCardProps) {
+  const isFree = entry.game.isFree || entry.game.rawPrice === 0;
+
+  return (
+    <article className="catalog-card-opt p5-frame-sm p5-frame-interactive bg-bt-border group">
+      <div className="bg-bt-surface flex flex-col overflow-hidden">
+        {/* Steam Header Art Banner */}
+        <div className="relative aspect-[460/215] w-full overflow-hidden bg-bt-bg border-b border-bt-border">
+          <SteamHeaderArt
+            key={entry.game.headerImage}
+            src={entry.game.headerImage}
+            alt={entry.game.name}
+            appid={entry.game.appid}
+            variant="card"
+          />
+
+          {/* Subtle Scrim for Overlay Legibility */}
+          <div
+            className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/85 via-transparent to-black/45"
+            aria-hidden="true"
+          />
+
+          {/* Top-Left Skewed Tags (no backdrop-blur for smooth 60/120fps scrolling) */}
+          <div className="absolute left-2.5 top-2.5 flex flex-wrap items-center gap-1.5">
+            {entry.isExclusive ? (
+              <span className="p5-tag inline-flex items-center bg-bt-red px-2 py-0.5 font-mono text-[10px] font-semibold uppercase tracking-wider text-white shadow-sm">
+                <span className="p5-unskew">EXCLUSIVE</span>
+              </span>
+            ) : (
+              <span
+                data-keep-white="true"
+                className="p5-tag inline-flex items-center bg-black/85 border border-white/25 px-2 py-0.5 font-mono text-[10px] font-semibold uppercase tracking-wider text-white"
+              >
+                <span className="p5-unskew tabular-nums">
+                  SHARED ×{entry.ownerNames.length}
+                </span>
+              </span>
+            )}
+
+            {entry.game.familySharingExcluded && (
+              <span
+                data-keep-white="true"
+                className="p5-tag inline-flex items-center bg-amber-950/90 border border-amber-400/60 px-2 py-0.5 font-mono text-[10px] font-semibold uppercase tracking-wider text-amber-300"
+              >
+                <span className="p5-unskew inline-flex items-center gap-1">
+                  <ShieldAlert className="h-2.5 w-2.5" />
+                  OPT-OUT
+                </span>
+              </span>
+            )}
+          </div>
+
+          {/* Bottom-Right Price Tag */}
+          <div
+            data-keep-white="true"
+            className={`absolute bottom-2 right-2 bg-black/88 border border-white/20 px-2 py-0.5 font-mono text-xs font-semibold tabular-nums ${
+              isFree ? "text-zinc-300" : "text-white"
+            }`}
+          >
+            {formatCatalogPrice(entry.game.rawPrice, sym, region, entry.game.isFree)}
+          </div>
+        </div>
+
+        {/* Card Body */}
+        <div className="flex flex-1 flex-col justify-between gap-3 p-3.5">
+          <div>
+            <h3
+              title={entry.game.name}
+              className="font-condensed text-lg font-bold leading-snug tracking-wide text-white line-clamp-1"
+            >
+              {entry.game.name}
+            </h3>
+            <div className="mt-0.5 flex items-center justify-between gap-2">
+              <span className="font-mono text-[11px] tabular-nums text-bt-dim">
+                APPID {entry.game.appid}
+              </span>
+              <a
+                href={`https://store.steampowered.com/app/${entry.game.appid}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                title={`Open ${entry.game.name} on Steam`}
+                className="cursor-pointer inline-flex items-center gap-1 font-mono text-[10px] uppercase tracking-wider text-bt-dim hover:text-bt-red transition-colors"
+              >
+                <span>Store</span>
+                <ExternalLink className="h-2.5 w-2.5" />
+              </a>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap gap-1.5">
+            {entry.ownerIds.map((ownerId, idx) => {
+              const ownerName = entry.ownerNames[idx] ?? ownerId;
+              const isSelectedOwner = effectiveMemberFilter === ownerId;
+              return (
+                <button
+                  key={ownerId}
+                  type="button"
+                  onClick={() => onToggleMemberFilter(ownerId)}
+                  title={`Filter by ${ownerName}`}
+                  className={`cursor-pointer border px-2 py-0.5 text-[11px] font-mono transition-colors ${
+                    isSelectedOwner
+                      ? "border-bt-red bg-bt-red/20 text-white"
+                      : "border-bt-border bg-bt-bg text-bt-muted hover:border-bt-red/60 hover:text-white"
+                  }`}
+                >
+                  {ownerName}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+    </article>
+  );
+});
+
+const CatalogListRow = memo(function CatalogListRow({
+  entry,
+  sym,
+  region,
+  effectiveMemberFilter,
+  onToggleMemberFilter,
+}: CatalogCardProps) {
+  const isFree = entry.game.isFree || entry.game.rawPrice === 0;
+
+  return (
+    <tr className="catalog-row-opt hover:bg-bt-elevated/70 transition-colors">
+      <td className="px-5 py-2.5">
+        <div className="flex items-center gap-3 min-w-[240px]">
+          <div className="h-[36px] w-[76px] shrink-0 overflow-hidden border border-bt-border bg-bt-bg">
+            <SteamHeaderArt
+              key={entry.game.headerImage}
+              src={entry.game.headerImage}
+              alt={entry.game.name}
+              appid={entry.game.appid}
+              variant="thumb"
+            />
+          </div>
+          <div className="min-w-0">
+            <div className="flex items-center gap-2">
+              <a
+                href={`https://store.steampowered.com/app/${entry.game.appid}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="cursor-pointer font-condensed text-base font-bold tracking-wide text-white hover:text-bt-red transition-colors truncate"
+              >
+                {entry.game.name}
+              </a>
+              {entry.game.familySharingExcluded && (
+                <span className="inline-flex shrink-0 items-center gap-1 border border-amber-400/50 bg-amber-500/15 px-1.5 py-0.5 font-mono text-[10px] font-semibold uppercase tracking-wider text-amber-300">
+                  <ShieldAlert className="h-2.5 w-2.5" />
+                  OPT-OUT
+                </span>
+              )}
+            </div>
+            <div className="font-mono text-[10px] tabular-nums text-bt-dim">
+              APPID {entry.game.appid}
+            </div>
+          </div>
+        </div>
+      </td>
+
+      <td className="px-4 py-2.5 whitespace-nowrap">
+        {entry.isExclusive ? (
+          <span className="p5-tag inline-flex items-center bg-bt-red px-2 py-0.5 font-mono text-[10px] font-semibold uppercase tracking-wider text-white">
+            <span className="p5-unskew">EXCLUSIVE</span>
+          </span>
+        ) : (
+          <span className="p5-tag inline-flex items-center bg-bt-bg border border-bt-border px-2 py-0.5 font-mono text-[10px] font-semibold uppercase tracking-wider text-white">
+            <span className="p5-unskew tabular-nums">
+              SHARED ×{entry.ownerNames.length}
+            </span>
+          </span>
+        )}
+      </td>
+
+      <td className="px-4 py-2.5">
+        <div className="flex flex-wrap gap-1.5">
+          {entry.ownerIds.map((ownerId, idx) => {
+            const ownerName = entry.ownerNames[idx] ?? ownerId;
+            const isSelectedOwner = effectiveMemberFilter === ownerId;
+            return (
+              <button
+                key={ownerId}
+                type="button"
+                onClick={() => onToggleMemberFilter(ownerId)}
+                className={`cursor-pointer border px-2 py-0.5 text-[11px] font-mono transition-colors ${
+                  isSelectedOwner
+                    ? "border-bt-red bg-bt-red/20 text-white"
+                    : "border-bt-border bg-bt-bg text-bt-muted hover:border-bt-red/60 hover:text-white"
+                }`}
+              >
+                {ownerName}
+              </button>
+            );
+          })}
+        </div>
+      </td>
+
+      <td
+        className={`px-5 py-2.5 text-right font-mono text-sm font-semibold tabular-nums whitespace-nowrap ${
+          isFree ? "text-bt-dim" : "text-white"
+        }`}
+      >
+        {formatCatalogPrice(entry.game.rawPrice, sym, region, entry.game.isFree)}
+      </td>
+    </tr>
+  );
+});
 
 export function OverlapAndCatalog({ analysis }: OverlapAndCatalogProps) {
   const [query, setQuery] = useState("");
+  const deferredQuery = useDeferredValue(query);
   const [filter, setFilter] = useState<OwnershipFilter>("all");
   const [memberFilter, setMemberFilter] = useState<string>("all");
   const [sortBy, setSortBy] = useState<SortOption>("price-desc");
   const [viewMode, setViewMode] = useState<ViewMode>("grid");
   const [visibleCount, setVisibleCount] = useState<number>(PAGE_SIZE);
-  const [hoveredCell, setHoveredCell] = useState<{
-    rowId: string;
-    colId: string;
-  } | null>(null);
 
   const sym = analysis.currencySymbol;
 
@@ -100,14 +593,6 @@ export function OverlapAndCatalog({ analysis }: OverlapAndCatalogProps) {
   const effectiveFilter: OwnershipFilter =
     filter === "excluded" && !hasExcludedInCatalog ? "all" : filter;
 
-  const formatMoney = (val: number, isFree?: boolean) => {
-    if (isFree || val === 0) return "FREE";
-    if (analysis.region === "jp") {
-      return `${sym}${Math.round(val).toLocaleString()}`;
-    }
-    return `${sym}${val.toFixed(2)}`;
-  };
-
   const formatTotal = (val: number) => {
     if (analysis.region === "jp") {
       return `${sym}${Math.round(val).toLocaleString()}`;
@@ -118,20 +603,8 @@ export function OverlapAndCatalog({ analysis }: OverlapAndCatalogProps) {
     })}`;
   };
 
-  const maxOffDiagonal = useMemo(() => {
-    let max = 1;
-    for (const mA of analysis.members) {
-      for (const mB of analysis.members) {
-        if (mA.memberId === mB.memberId) continue;
-        const val = analysis.overlapMatrix[mA.memberId]?.[mB.memberId] ?? 0;
-        if (val > max) max = val;
-      }
-    }
-    return max;
-  }, [analysis]);
-
   const filteredCatalog = useMemo(() => {
-    const q = query.trim().toLowerCase();
+    const q = deferredQuery.trim().toLowerCase();
 
     const matches = analysis.catalog.filter((entry) => {
       if (q) {
@@ -141,7 +614,10 @@ export function OverlapAndCatalog({ analysis }: OverlapAndCatalogProps) {
       }
       if (effectiveFilter === "exclusive" && !entry.isExclusive) return false;
       if (effectiveFilter === "shared" && entry.isExclusive) return false;
-      if (effectiveFilter === "excluded" && !entry.game.familySharingExcluded) {
+      if (
+        effectiveFilter === "excluded" &&
+        !entry.game.familySharingExcluded
+      ) {
         return false;
       }
       if (
@@ -171,7 +647,7 @@ export function OverlapAndCatalog({ analysis }: OverlapAndCatalogProps) {
     });
   }, [
     analysis.catalog,
-    query,
+    deferredQuery,
     effectiveFilter,
     effectiveMemberFilter,
     sortBy,
@@ -229,10 +705,10 @@ export function OverlapAndCatalog({ analysis }: OverlapAndCatalogProps) {
     setVisibleCount(PAGE_SIZE);
   };
 
-  const handleToggleMemberFilter = (memberId: string) => {
+  const handleToggleMemberFilter = useCallback((memberId: string) => {
     setMemberFilter((prev) => (prev === memberId ? "all" : memberId));
     setVisibleCount(PAGE_SIZE);
-  };
+  }, []);
 
   const handleSortChange = (next: SortOption) => {
     setSortBy(next);
@@ -255,221 +731,14 @@ export function OverlapAndCatalog({ analysis }: OverlapAndCatalogProps) {
       : []),
   ];
 
-  const hoveredSummary = useMemo(() => {
-    if (!hoveredCell) return null;
-    const row = analysis.members.find((m) => m.memberId === hoveredCell.rowId);
-    const col = analysis.members.find((m) => m.memberId === hoveredCell.colId);
-    if (!row || !col) return null;
-    const count = analysis.overlapMatrix[row.memberId]?.[col.memberId] ?? 0;
-    if (row.memberId === col.memberId) {
-      return `${row.name.toUpperCase()} // ${count} ELIGIBLE`;
-    }
-    return `${row.name.toUpperCase()} × ${col.name.toUpperCase()} // ${count} SHARED`;
-  }, [analysis.members, analysis.overlapMatrix, hoveredCell]);
-
   return (
     <div className="space-y-6">
-      {/* N x N Overlap Heatmap Matrix */}
-      <section className="p5-frame bg-bt-border">
-        <div className="bg-bt-surface overflow-hidden">
-          <div className="border-b border-bt-border bg-bt-elevated/50 px-5 py-4 flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-            <div className="space-y-1">
-              <div className="flex flex-wrap items-center gap-2.5">
-                <span className="h-4 w-1 bg-bt-red" aria-hidden="true" />
-                <Grid3X3 className="h-4 w-4 text-bt-red" />
-                <h2 className="font-condensed text-xl font-bold uppercase tracking-wider text-white">
-                  Library Overlap Matrix
-                </h2>
-                <span className="p5-tag inline-flex items-center bg-bt-bg border border-bt-border px-2 py-0.5 font-mono text-[10px] font-semibold uppercase tracking-wider text-bt-muted">
-                  <span className="p5-unskew tabular-nums">
-                    {analysis.members.length}×{analysis.members.length} TELEMETRY
-                  </span>
-                </span>
-              </div>
-              <p className="text-xs text-bt-muted">
-                Diagonal cells show each member&apos;s total eligible titles; off-diagonal cells map shared overlap between pairs.
-              </p>
-            </div>
-
-            <div className="flex flex-wrap items-center gap-4">
-              {hoveredSummary && (
-                <div className="border border-bt-red/40 bg-bt-bg px-2.5 py-1 font-mono text-[11px] font-medium tracking-wider text-white tabular-nums">
-                  {hoveredSummary}
-                </div>
-              )}
-
-              <div
-                className="flex items-center gap-2 border border-bt-border bg-bt-bg px-3 py-1.5"
-                aria-label="Overlap intensity legend"
-              >
-                <span className="font-mono text-[10px] uppercase tracking-wider text-bt-dim">
-                  0
-                </span>
-                <div className="flex items-center gap-1">
-                  {HEATMAP_LEGEND_STEPS.map((alpha) => (
-                    <span
-                      key={alpha}
-                      className="h-3 w-4 border border-bt-border/80"
-                      style={{
-                        backgroundColor:
-                          alpha === 0
-                            ? "#181116"
-                            : `rgba(232, 0, 45, ${alpha})`,
-                      }}
-                    />
-                  ))}
-                </div>
-                <span className="font-mono text-[10px] uppercase tracking-wider text-bt-red font-semibold">
-                  HIGH OVERLAP
-                </span>
-              </div>
-            </div>
-          </div>
-
-          <div
-            className="tier-rail overflow-x-auto p-4 sm:p-5"
-            onMouseLeave={() => setHoveredCell(null)}
-          >
-            <table className="w-full border-separate border-spacing-1 text-xs">
-              <thead>
-                <tr>
-                  <th className="px-3 py-2 text-left font-mono text-[10px] uppercase tracking-widest text-bt-dim">
-                    Member
-                  </th>
-                  {analysis.members.map((col) => {
-                    const isColHighlighted = hoveredCell?.colId === col.memberId;
-                    const isFilteredMember =
-                      effectiveMemberFilter === col.memberId;
-                    return (
-                      <th
-                        key={col.memberId}
-                        className="px-2 py-2 text-center min-w-[82px]"
-                      >
-                        <button
-                          type="button"
-                          onClick={() => handleToggleMemberFilter(col.memberId)}
-                          title={`Filter catalog by ${col.name}`}
-                          className={`w-full cursor-pointer px-1.5 py-1 font-condensed text-sm font-bold uppercase tracking-wider transition-colors ${
-                            isFilteredMember
-                              ? "bg-bt-red text-white"
-                              : isColHighlighted
-                                ? "bg-bt-elevated text-white"
-                                : "text-bt-muted hover:text-white"
-                          }`}
-                        >
-                          <span className="block truncate">{col.name}</span>
-                        </button>
-                      </th>
-                    );
-                  })}
-                </tr>
-              </thead>
-              <tbody>
-                {analysis.members.map((row) => {
-                  const isRowHighlighted = hoveredCell?.rowId === row.memberId;
-                  const isFilteredMember =
-                    effectiveMemberFilter === row.memberId;
-                  return (
-                    <tr key={row.memberId}>
-                      <td className="pr-2 py-0.5 whitespace-nowrap">
-                        <button
-                          type="button"
-                          onClick={() => handleToggleMemberFilter(row.memberId)}
-                          title={`Filter catalog by ${row.name}`}
-                          className={`flex w-full cursor-pointer items-center gap-2 px-2.5 py-2 text-left font-condensed text-sm font-bold uppercase tracking-wider transition-colors ${
-                            isFilteredMember
-                              ? "bg-bt-red text-white"
-                              : isRowHighlighted
-                                ? "bg-bt-elevated text-white"
-                                : "text-white hover:bg-bt-elevated/60"
-                          }`}
-                        >
-                          <span
-                            className={`h-2 w-2 shrink-0 ${
-                              isFilteredMember
-                                ? "bg-white"
-                                : isRowHighlighted
-                                  ? "bg-bt-red"
-                                  : "bg-bt-border"
-                            }`}
-                          />
-                          <span>{row.name}</span>
-                        </button>
-                      </td>
-                      {analysis.members.map((col) => {
-                        const count =
-                          analysis.overlapMatrix[row.memberId]?.[
-                            col.memberId
-                          ] ?? 0;
-                        const isDiag = row.memberId === col.memberId;
-                        const isHovered =
-                          hoveredCell?.rowId === row.memberId &&
-                          hoveredCell?.colId === col.memberId;
-                        const isCrosshair =
-                          !isHovered &&
-                          (hoveredCell?.rowId === row.memberId ||
-                            hoveredCell?.colId === col.memberId);
-                        const intensity =
-                          isDiag || count === 0
-                            ? 0
-                            : Math.min(1, count / maxOffDiagonal);
-                        const crimsonAlpha = 0.08 + intensity * 0.57;
-
-                        return (
-                          <td
-                            key={col.memberId}
-                            className="p-0 text-center"
-                            onMouseEnter={() =>
-                              setHoveredCell({
-                                rowId: row.memberId,
-                                colId: col.memberId,
-                              })
-                            }
-                          >
-                            <div
-                              title={
-                                isDiag
-                                  ? `${row.name}: ${count} total eligible games`
-                                  : `${row.name} & ${col.name}: ${count} shared games`
-                              }
-                              className={`py-2.5 px-2 font-mono text-xs tabular-nums border transition-colors ${
-                                isDiag
-                                  ? "bg-bt-elevated border-bt-border border-b-2 border-b-bt-red font-bold text-white"
-                                  : count === 0
-                                    ? "bg-bt-bg/70 border-bt-border/70 font-medium text-bt-dim"
-                                    : "font-semibold text-white"
-                              } ${
-                                isHovered
-                                  ? "ring-1 ring-inset ring-white/80"
-                                  : isCrosshair
-                                    ? "ring-1 ring-inset ring-bt-red/35"
-                                    : ""
-                              }`}
-                              style={
-                                isDiag || count === 0
-                                  ? undefined
-                                  : {
-                                      backgroundColor: `rgba(232, 0, 45, ${crimsonAlpha.toFixed(3)})`,
-                                      borderColor: `rgba(232, 0, 45, ${(
-                                        0.24 +
-                                        intensity * 0.48
-                                      ).toFixed(3)})`,
-                                    }
-                              }
-                            >
-                              {isDiag ? count : count === 0 ? "—" : count}
-                            </div>
-                          </td>
-                        );
-                      })}
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </section>
+      {/* N x N Overlap Heatmap Matrix (isolated memoized component) */}
+      <OverlapMatrix
+        analysis={analysis}
+        effectiveMemberFilter={effectiveMemberFilter}
+        onToggleMemberFilter={handleToggleMemberFilter}
+      />
 
       {/* Deduplicated Family Game Catalog */}
       <section className="p5-frame bg-bt-border">
@@ -664,120 +933,16 @@ export function OverlapAndCatalog({ analysis }: OverlapAndCatalogProps) {
           ) : viewMode === "grid" ? (
             <div className="p-4 sm:p-5">
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 gap-4">
-                {visibleCatalog.map((entry) => {
-                  const isFree = entry.game.isFree || entry.game.rawPrice === 0;
-                  return (
-                    <article
-                      key={entry.game.appid}
-                      className="p5-frame-sm p5-frame-interactive bg-bt-border group"
-                    >
-                      <div className="bg-bt-surface flex flex-col overflow-hidden">
-                        {/* Steam Header Art Banner */}
-                        <div className="relative aspect-[460/215] w-full overflow-hidden bg-bt-bg border-b border-bt-border">
-                          <SteamHeaderArt
-                            key={entry.game.headerImage}
-                            src={entry.game.headerImage}
-                            alt={entry.game.name}
-                            appid={entry.game.appid}
-                            variant="card"
-                          />
-
-                          {/* Subtle Scrim for Overlay Legibility */}
-                          <div
-                            className="pointer-events-none absolute inset-0 bg-gradient-to-t from-bt-bg/90 via-transparent to-bt-bg/45"
-                            aria-hidden="true"
-                          />
-
-                          {/* Top-Left Skewed Tags */}
-                          <div className="absolute left-2.5 top-2.5 flex flex-wrap items-center gap-1.5">
-                            {entry.isExclusive ? (
-                              <span className="p5-tag inline-flex items-center bg-bt-red px-2 py-0.5 font-mono text-[10px] font-semibold uppercase tracking-wider text-white shadow-sm">
-                                <span className="p5-unskew">EXCLUSIVE</span>
-                              </span>
-                            ) : (
-                              <span className="p5-tag inline-flex items-center bg-bt-bg/90 border border-white/20 px-2 py-0.5 font-mono text-[10px] font-semibold uppercase tracking-wider text-white backdrop-blur-xs">
-                                <span className="p5-unskew tabular-nums">
-                                  SHARED ×{entry.ownerNames.length}
-                                </span>
-                              </span>
-                            )}
-
-                            {entry.game.familySharingExcluded && (
-                              <span className="p5-tag inline-flex items-center bg-amber-500/20 border border-amber-400/50 px-2 py-0.5 font-mono text-[10px] font-semibold uppercase tracking-wider text-amber-300 backdrop-blur-xs">
-                                <span className="p5-unskew inline-flex items-center gap-1">
-                                  <ShieldAlert className="h-2.5 w-2.5" />
-                                  OPT-OUT
-                                </span>
-                              </span>
-                            )}
-                          </div>
-
-                          {/* Bottom-Right Price Tag */}
-                          <div
-                            className={`absolute bottom-2 right-2 bg-bt-bg/95 border border-bt-border px-2 py-0.5 font-mono text-xs font-semibold tabular-nums ${
-                              isFree ? "text-bt-muted" : "text-white"
-                            }`}
-                          >
-                            {formatMoney(entry.game.rawPrice, entry.game.isFree)}
-                          </div>
-                        </div>
-
-                        {/* Card Body */}
-                        <div className="flex flex-1 flex-col justify-between gap-3 p-3.5">
-                          <div>
-                            <h3
-                              title={entry.game.name}
-                              className="font-condensed text-lg font-bold leading-snug tracking-wide text-white line-clamp-1"
-                            >
-                              {entry.game.name}
-                            </h3>
-                            <div className="mt-0.5 flex items-center justify-between gap-2">
-                              <span className="font-mono text-[11px] tabular-nums text-bt-dim">
-                                APPID {entry.game.appid}
-                              </span>
-                              <a
-                                href={`https://store.steampowered.com/app/${entry.game.appid}`}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                title={`Open ${entry.game.name} on Steam`}
-                                className="cursor-pointer inline-flex items-center gap-1 font-mono text-[10px] uppercase tracking-wider text-bt-dim hover:text-bt-red transition-colors"
-                              >
-                                <span>Store</span>
-                                <ExternalLink className="h-2.5 w-2.5" />
-                              </a>
-                            </div>
-                          </div>
-
-                          <div className="flex flex-wrap gap-1.5">
-                            {entry.ownerIds.map((ownerId, idx) => {
-                              const ownerName =
-                                entry.ownerNames[idx] ?? ownerId;
-                              const isSelectedOwner =
-                                effectiveMemberFilter === ownerId;
-                              return (
-                                <button
-                                  key={ownerId}
-                                  type="button"
-                                  onClick={() =>
-                                    handleToggleMemberFilter(ownerId)
-                                  }
-                                  title={`Filter by ${ownerName}`}
-                                  className={`cursor-pointer border px-2 py-0.5 text-[11px] font-mono transition-colors ${
-                                    isSelectedOwner
-                                      ? "border-bt-red bg-bt-red/20 text-white"
-                                      : "border-bt-border bg-bt-bg text-bt-muted hover:border-bt-red/60 hover:text-white"
-                                  }`}
-                                >
-                                  {ownerName}
-                                </button>
-                              );
-                            })}
-                          </div>
-                        </div>
-                      </div>
-                    </article>
-                  );
-                })}
+                {visibleCatalog.map((entry) => (
+                  <CatalogGridCard
+                    key={entry.game.appid}
+                    entry={entry}
+                    sym={sym}
+                    region={analysis.region}
+                    effectiveMemberFilter={effectiveMemberFilter}
+                    onToggleMemberFilter={handleToggleMemberFilter}
+                  />
+                ))}
               </div>
             </div>
           ) : (
@@ -793,99 +958,16 @@ export function OverlapAndCatalog({ analysis }: OverlapAndCatalogProps) {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-bt-border/60">
-                  {visibleCatalog.map((entry) => {
-                    const isFree = entry.game.isFree || entry.game.rawPrice === 0;
-                    return (
-                      <tr
-                        key={entry.game.appid}
-                        className="hover:bg-bt-elevated/70 transition-colors"
-                      >
-                        <td className="px-5 py-2.5">
-                          <div className="flex items-center gap-3 min-w-[240px]">
-                            <div className="h-[36px] w-[76px] shrink-0 overflow-hidden border border-bt-border bg-bt-bg">
-                              <SteamHeaderArt
-                                key={entry.game.headerImage}
-                                src={entry.game.headerImage}
-                                alt={entry.game.name}
-                                appid={entry.game.appid}
-                                variant="thumb"
-                              />
-                            </div>
-                            <div className="min-w-0">
-                              <div className="flex items-center gap-2">
-                                <a
-                                  href={`https://store.steampowered.com/app/${entry.game.appid}`}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="cursor-pointer font-condensed text-base font-bold tracking-wide text-white hover:text-bt-red transition-colors truncate"
-                                >
-                                  {entry.game.name}
-                                </a>
-                                {entry.game.familySharingExcluded && (
-                                  <span className="inline-flex shrink-0 items-center gap-1 border border-amber-400/50 bg-amber-500/15 px-1.5 py-0.5 font-mono text-[10px] font-semibold uppercase tracking-wider text-amber-300">
-                                    <ShieldAlert className="h-2.5 w-2.5" />
-                                    OPT-OUT
-                                  </span>
-                                )}
-                              </div>
-                              <div className="font-mono text-[10px] tabular-nums text-bt-dim">
-                                APPID {entry.game.appid}
-                              </div>
-                            </div>
-                          </div>
-                        </td>
-
-                        <td className="px-4 py-2.5 whitespace-nowrap">
-                          {entry.isExclusive ? (
-                            <span className="p5-tag inline-flex items-center bg-bt-red px-2 py-0.5 font-mono text-[10px] font-semibold uppercase tracking-wider text-white">
-                              <span className="p5-unskew">EXCLUSIVE</span>
-                            </span>
-                          ) : (
-                            <span className="p5-tag inline-flex items-center bg-bt-bg border border-white/20 px-2 py-0.5 font-mono text-[10px] font-semibold uppercase tracking-wider text-white">
-                              <span className="p5-unskew tabular-nums">
-                                SHARED ×{entry.ownerNames.length}
-                              </span>
-                            </span>
-                          )}
-                        </td>
-
-                        <td className="px-4 py-2.5">
-                          <div className="flex flex-wrap gap-1.5">
-                            {entry.ownerIds.map((ownerId, idx) => {
-                              const ownerName =
-                                entry.ownerNames[idx] ?? ownerId;
-                              const isSelectedOwner =
-                                effectiveMemberFilter === ownerId;
-                              return (
-                                <button
-                                  key={ownerId}
-                                  type="button"
-                                  onClick={() =>
-                                    handleToggleMemberFilter(ownerId)
-                                  }
-                                  className={`cursor-pointer border px-2 py-0.5 text-[11px] font-mono transition-colors ${
-                                    isSelectedOwner
-                                      ? "border-bt-red bg-bt-red/20 text-white"
-                                      : "border-bt-border bg-bt-bg text-bt-muted hover:border-bt-red/60 hover:text-white"
-                                  }`}
-                                >
-                                  {ownerName}
-                                </button>
-                              );
-                            })}
-                          </div>
-                        </td>
-
-                        <td
-                          className={`px-5 py-2.5 text-right font-mono text-sm font-semibold tabular-nums whitespace-nowrap ${
-                            isFree ? "text-bt-dim" : "text-white"
-                          }`}
-                        >
-                          {formatMoney(entry.game.rawPrice, entry.game.isFree)}
-                        </td>
-                      </tr>
-                    );
-                  })}
+                  {visibleCatalog.map((entry) => (
+                    <CatalogListRow
+                      key={entry.game.appid}
+                      entry={entry}
+                      sym={sym}
+                      region={analysis.region}
+                      effectiveMemberFilter={effectiveMemberFilter}
+                      onToggleMemberFilter={handleToggleMemberFilter}
+                    />
+                  ))}
                 </tbody>
               </table>
             </div>

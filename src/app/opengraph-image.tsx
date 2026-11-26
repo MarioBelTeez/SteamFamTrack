@@ -257,7 +257,7 @@ export default function OpenGraphImage() {
               color: "#A1A1AA",
             }}
           >
-            STEAM-FAM-TRACK-ZDP6.VERCEL.APP
+            STEAMFT.COM
           </div>
         </div>
       </div>

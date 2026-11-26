@@ -69,10 +69,16 @@ export function ContributionBoard({ analysis }: ContributionBoardProps) {
     const list = [...analysis.members];
     list.sort((a: MemberContribution, b: MemberContribution) => {
       const diff = a[sortKey] - b[sortKey];
-      return sortDir === "desc" ? -diff : diff;
+      if (diff !== 0) return sortDir === "desc" ? -diff : diff;
+      return a.name.localeCompare(b.name);
     });
     return list;
   }, [analysis.members, sortKey, sortDir]);
+
+  const getAriaSort = (key: SortKey): "ascending" | "descending" | "none" => {
+    if (sortKey !== key) return "none";
+    return sortDir === "asc" ? "ascending" : "descending";
+  };
 
   const upNextMember = useMemo(
     () =>
@@ -265,7 +271,10 @@ export function ContributionBoard({ analysis }: ContributionBoardProps) {
                 <tr>
                   <th className="px-3.5 py-3.5 font-medium w-12">#</th>
                   <th className="px-3.5 py-3.5 font-medium">Member</th>
-                  <th className="px-2.5 py-3.5 text-right font-medium">
+                  <th
+                    className="px-2.5 py-3.5 text-right font-medium"
+                    aria-sort={getAriaSort("totalGames")}
+                  >
                     <button
                       type="button"
                       onClick={() => handleSort("totalGames")}
@@ -275,7 +284,10 @@ export function ContributionBoard({ analysis }: ContributionBoardProps) {
                       {renderSortIcon("totalGames")}
                     </button>
                   </th>
-                  <th className="px-2.5 py-3.5 text-right font-medium">
+                  <th
+                    className="px-2.5 py-3.5 text-right font-medium"
+                    aria-sort={getAriaSort("exclusiveGames")}
+                  >
                     <button
                       type="button"
                       onClick={() => handleSort("exclusiveGames")}
@@ -285,7 +297,10 @@ export function ContributionBoard({ analysis }: ContributionBoardProps) {
                       {renderSortIcon("exclusiveGames")}
                     </button>
                   </th>
-                  <th className="px-2.5 py-3.5 text-right font-medium">
+                  <th
+                    className="px-2.5 py-3.5 text-right font-medium"
+                    aria-sort={getAriaSort("sharedGames")}
+                  >
                     <button
                       type="button"
                       onClick={() => handleSort("sharedGames")}
@@ -295,7 +310,10 @@ export function ContributionBoard({ analysis }: ContributionBoardProps) {
                       {renderSortIcon("sharedGames")}
                     </button>
                   </th>
-                  <th className="px-2.5 py-3.5 text-right font-medium whitespace-nowrap">
+                  <th
+                    className="px-2.5 py-3.5 text-right font-medium whitespace-nowrap"
+                    aria-sort={getAriaSort("totalRawValue")}
+                  >
                     <button
                       type="button"
                       onClick={() => handleSort("totalRawValue")}
@@ -305,7 +323,10 @@ export function ContributionBoard({ analysis }: ContributionBoardProps) {
                       {renderSortIcon("totalRawValue")}
                     </button>
                   </th>
-                  <th className="px-2.5 py-3.5 text-right font-medium whitespace-nowrap">
+                  <th
+                    className="px-2.5 py-3.5 text-right font-medium whitespace-nowrap"
+                    aria-sort={getAriaSort("exclusiveValue")}
+                  >
                     <button
                       type="button"
                       onClick={() => handleSort("exclusiveValue")}
@@ -315,7 +336,10 @@ export function ContributionBoard({ analysis }: ContributionBoardProps) {
                       {renderSortIcon("exclusiveValue")}
                     </button>
                   </th>
-                  <th className="px-3.5 py-3.5 min-w-[140px] font-medium whitespace-nowrap">
+                  <th
+                    className="px-3.5 py-3.5 min-w-[140px] font-medium whitespace-nowrap"
+                    aria-sort={getAriaSort("sharePercent")}
+                  >
                     <button
                       type="button"
                       onClick={() => handleSort("sharePercent")}
@@ -609,7 +633,7 @@ export function ContributionBoard({ analysis }: ContributionBoardProps) {
                       {/* Crosshair Overlay SVG */}
                       <svg
                         viewBox="0 0 112 112"
-                        className="pointer-events-none absolute inset-0 h-full w-full text-bt-red drop-shadow-[0_0_6px_rgba(232,0,45,0.75)]"
+                        className="pointer-events-none absolute inset-0 h-full w-full text-bt-red drop-shadow-[0_0_6px_rgb(var(--bt-accent-rgb)/0.75)]"
                         fill="none"
                         aria-hidden="true"
                       >
@@ -682,7 +706,8 @@ export function ContributionBoard({ analysis }: ContributionBoardProps) {
                   {analysis.fairness.members.map((fm) => {
                     const isNeutral = Math.abs(fm.deltaFromAverageValue) < 0.005;
                     const isAhead = fm.deltaFromAverageValue > 0;
-                    const isFreeloaderSkull = fm.sharePercent < 15 && !isAhead;
+                    const isFreeloaderSkull =
+                      fm.sharePercent < 15 && !isAhead && !isNeutral;
                     const ratioPct = Math.min(
                       100,
                       (Math.abs(fm.deltaFromAverageValue) / maxAbsDelta) * 100
@@ -762,8 +787,8 @@ export function ContributionBoard({ analysis }: ContributionBoardProps) {
                               >
                                 {isFreeloaderSkull && (
                                   <span
-                                    title={`${fm.sharePercent.toFixed(1)}% share (< 15%)`}
-                                    className="pointer-events-none absolute -left-3 top-1/2 -translate-y-1/2 z-10 flex h-6 w-6 items-center justify-center rounded-sm border border-bt-red bg-bt-bg shadow-[0_0_10px_rgba(232,0,45,0.65)]"
+                                    title={`${fm.name}: ${fm.sharePercent.toFixed(1)}% share (< 15%)`}
+                                    className="absolute -left-3 top-1/2 -translate-y-1/2 z-10 flex h-6 w-6 items-center justify-center rounded-sm border border-bt-red bg-bt-bg shadow-[0_0_10px_rgb(var(--bt-accent-rgb)/0.6)]"
                                   >
                                     <Skull
                                       className="h-4 w-4 text-bt-red"

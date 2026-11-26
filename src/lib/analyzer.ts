@@ -312,3 +312,116 @@ export function simulateSwap(
     shareDeltas,
   };
 }
+
+/**
+ * Finds the (active -> waitlist) swap pair that maximizes unique catalog value delta
+ * (tie-breaking on unique games delta) in O(A*G + A*W*g) instead of running full
+ * analyzeFamily() per pair.
+ */
+export function findBestSwapPair(
+  activeLibraries: MemberLibrary[],
+  waitlistLibraries: MemberLibrary[],
+  includeExcluded: boolean = false
+): {
+  removeId: string;
+  addId: string;
+  uniqueValueDelta: number;
+  uniqueGamesDelta: number;
+} | null {
+  if (activeLibraries.length === 0 || waitlistLibraries.length === 0) {
+    return null;
+  }
+
+  // Track owner count & canonical rawPrice across active libraries (first owner wins, matching analyzeFamily)
+  const activeCounts = new Map<number, { count: number; rawPrice: number }>();
+  const activeUniqueGamesByMember = new Map<
+    string,
+    Map<number, number>
+  >();
+
+  for (const lib of activeLibraries) {
+    const memberGames = new Map<number, number>();
+    for (const game of lib.games) {
+      if (!includeExcluded && game.familySharingExcluded) continue;
+      if (memberGames.has(game.appid)) continue;
+      memberGames.set(game.appid, game.rawPrice);
+      const existing = activeCounts.get(game.appid);
+      if (existing) {
+        existing.count += 1;
+      } else {
+        activeCounts.set(game.appid, { count: 1, rawPrice: game.rawPrice });
+      }
+    }
+    activeUniqueGamesByMember.set(lib.member.id, memberGames);
+  }
+
+  // Pre-deduplicate waitlist eligible games
+  const waitlistUniqueGames = waitlistLibraries.map((lib) => {
+    const games = new Map<number, number>();
+    for (const game of lib.games) {
+      if (!includeExcluded && game.familySharingExcluded) continue;
+      if (!games.has(game.appid)) {
+        games.set(game.appid, game.rawPrice);
+      }
+    }
+    return { id: lib.member.id, games };
+  });
+
+  // Precompute exclusive losses per active member (games owned ONLY by this member)
+  const exclusiveByActive = activeLibraries.map((lib) => {
+    const memberGames = activeUniqueGamesByMember.get(lib.member.id)!;
+    const exclusive = new Map<number, number>();
+    let lossCount = 0;
+    let lossValue = 0;
+    for (const [appid] of memberGames) {
+      const info = activeCounts.get(appid);
+      if (info && info.count === 1) {
+        exclusive.set(appid, info.rawPrice);
+        lossCount += 1;
+        lossValue += info.rawPrice;
+      }
+    }
+    return { id: lib.member.id, exclusive, lossCount, lossValue };
+  });
+
+  let best: {
+    removeId: string;
+    addId: string;
+    uniqueValueDelta: number;
+    uniqueGamesDelta: number;
+  } | null = null;
+
+  for (const active of exclusiveByActive) {
+    for (const wait of waitlistUniqueGames) {
+      let gainCount = 0;
+      let gainValue = 0;
+      for (const [appid, rawPrice] of wait.games) {
+        const activeInfo = activeCounts.get(appid);
+        if (!activeInfo || active.exclusive.has(appid)) {
+          // Brand new to active family, OR replaces the exact game lost by removing `active`
+          gainCount += 1;
+          gainValue += rawPrice;
+        }
+      }
+
+      const uniqueGamesDelta = gainCount - active.lossCount;
+      const uniqueValueDelta = round2(gainValue - active.lossValue);
+
+      if (
+        !best ||
+        uniqueValueDelta > best.uniqueValueDelta ||
+        (uniqueValueDelta === best.uniqueValueDelta &&
+          uniqueGamesDelta > best.uniqueGamesDelta)
+      ) {
+        best = {
+          removeId: active.id,
+          addId: wait.id,
+          uniqueValueDelta,
+          uniqueGamesDelta,
+        };
+      }
+    }
+  }
+
+  return best;
+}
