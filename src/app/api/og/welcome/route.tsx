@@ -164,7 +164,7 @@ export async function GET(request: NextRequest) {
               }}
             >
               <span style={{ color: "#E8002D" }}>MEMBER #{memberNum}</span>
-              <span style={{ color: "#52525B" }}>//</span>
+              <span style={{ color: "#52525B" }}>{"//"}</span>
               <span>BELTEEZ.STUDIO • STEAMFT.COM</span>
             </div>
           </div>
