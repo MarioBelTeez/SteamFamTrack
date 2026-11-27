@@ -8,6 +8,7 @@ import {
 import "./globals.css";
 import { buildThemeInitScript } from "@/lib/themes";
 import { buildStructuredDataJsonLd } from "@/lib/seo-faq";
+import { Analytics } from "@vercel/analytics/next";
 
 const bebasNeue = Bebas_Neue({
   weight: "400",
@@ -98,6 +99,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       </head>
       <body className="min-h-full flex flex-col bg-bt-bg text-bt-ink antialiased selection:bg-bt-red selection:text-bt-on-accent">
         {children}
+        <Analytics />
       </body>
     </html>
   );
