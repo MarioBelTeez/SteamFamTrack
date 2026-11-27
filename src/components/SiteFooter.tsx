@@ -32,6 +32,12 @@ export function SiteFooter() {
             <ShieldCheck className="h-3.5 w-3.5 text-bt-red" aria-hidden="true" />
             <span>Privacy &amp; Data</span>
           </Link>
+          <Link
+            href="/terms"
+            className="hover:text-bt-red transition-colors"
+          >
+            Terms
+          </Link>
           <a
             href="https://github.com/MarioBelTeez/SteamFamTrack"
             target="_blank"
