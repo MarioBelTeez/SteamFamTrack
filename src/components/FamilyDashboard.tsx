@@ -152,8 +152,34 @@ type AccountSavedFamily = SavedFamilyData & {
   userRole?: "owner" | "active" | "waitlist";
 };
 
+const REGION_STORAGE_KEY = "steamfam_preferred_region";
+
+function parseSteamRegion(value: unknown): SteamRegion | null {
+  if (typeof value === "string" && value in STEAM_REGIONS) {
+    return value as SteamRegion;
+  }
+  return null;
+}
+
+function readStoredRegion(): SteamRegion | null {
+  try {
+    return parseSteamRegion(window.localStorage.getItem(REGION_STORAGE_KEY));
+  } catch {
+    return null;
+  }
+}
+
+function writeStoredRegion(region: SteamRegion): void {
+  try {
+    window.localStorage.setItem(REGION_STORAGE_KEY, region);
+  } catch {
+    // Ignore storage errors in restricted iframes / private mode
+  }
+}
+
 interface MeFamiliesResponse {
   user?: SteamSessionUser | null;
+  preferredRegion?: SteamRegion | null;
   activeFamily?: AccountSavedFamily | null;
   waitlistedIn?: AccountSavedFamily[];
 }
@@ -254,23 +280,27 @@ export function FamilyDashboard({
             activeSavedFamily.ownerSteamId64 === steamUser.steamId64)
       );
 
-  const loadSavedFamily = useCallback((fam: AccountSavedFamily) => {
-    isPreviewModeRef.current = false;
-    setIsPreviewMode(false);
-    setActiveSavedFamily(fam);
-    setRegion(fam.region);
-    setMembers(fam.members);
-    setWaitlist(fam.waitlist);
-    setSnapshots(fam.snapshots ?? []);
-    setActiveTab("board");
-    setAnalysis(null);
-    setActiveLibraries([]);
-    setWaitlistLibraries([]);
-    setError(null);
-    setWarnings([]);
-    setNotice(null);
-    setLoading(fam.members.length > 0);
-  }, []);
+  const loadSavedFamily = useCallback(
+    (fam: AccountSavedFamily, regionOverride?: SteamRegion | null) => {
+      isPreviewModeRef.current = false;
+      setIsPreviewMode(false);
+      const effectiveRegion = regionOverride ?? fam.region;
+      setActiveSavedFamily({ ...fam, region: effectiveRegion });
+      setRegion(effectiveRegion);
+      setMembers(fam.members);
+      setWaitlist(fam.waitlist);
+      setSnapshots(fam.snapshots ?? []);
+      setActiveTab("board");
+      setAnalysis(null);
+      setActiveLibraries([]);
+      setWaitlistLibraries([]);
+      setError(null);
+      setWarnings([]);
+      setNotice(null);
+      setLoading(fam.members.length > 0);
+    },
+    []
+  );
 
   const enterPreviewSandbox = useCallback(() => {
     isPreviewModeRef.current = true;
@@ -304,6 +334,32 @@ export function FamilyDashboard({
       .catch(() => {});
   }, []);
 
+  const persistRegionPreference = useCallback(
+    (nextRegion: SteamRegion, opts?: { syncFamily?: boolean }) => {
+      writeStoredRegion(nextRegion);
+
+      if (steamUser) {
+        fetch("/api/me/preferences", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ region: nextRegion }),
+        }).catch(() => {});
+      }
+
+      if (opts?.syncFamily !== false && activeSavedFamily && isOwner) {
+        setActiveSavedFamily((prev) =>
+          prev ? { ...prev, region: nextRegion } : prev
+        );
+        fetch(`/api/families/${encodeURIComponent(activeSavedFamily.slug)}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ region: nextRegion }),
+        }).catch(() => {});
+      }
+    },
+    [activeSavedFamily, isOwner, steamUser]
+  );
+
   const applyMeFamiliesResponse = useCallback(
     (d: MeFamiliesResponse) => {
       setSteamUser(d?.user ?? null);
@@ -311,13 +367,18 @@ export function FamilyDashboard({
       setWaitlistedFamilies(
         Array.isArray(d?.waitlistedIn) ? d.waitlistedIn : []
       );
+      const acctRegion = parseSteamRegion(d?.preferredRegion);
+      if (acctRegion) {
+        writeStoredRegion(acctRegion);
+        setRegion(acctRegion);
+      }
       if (
         !initialFamily &&
         !isPreviewModeRef.current &&
         !manualLaunchRef.current &&
         d?.activeFamily
       ) {
-        loadSavedFamily(d.activeFamily);
+        loadSavedFamily(d.activeFamily, acctRegion);
       }
     },
     [initialFamily, loadSavedFamily]
@@ -353,6 +414,14 @@ export function FamilyDashboard({
 
   useEffect(() => {
     let cancelled = false;
+    if (!initialFamily) {
+      const stored = readStoredRegion();
+      if (stored) {
+        queueMicrotask(() => {
+          if (!cancelled) setRegion(stored);
+        });
+      }
+    }
     const inDiscord = isDiscordActivityEnvironment();
     if (inDiscord) {
       void patchDiscordActivityUrls();
@@ -392,7 +461,7 @@ export function FamilyDashboard({
     return () => {
       cancelled = true;
     };
-  }, [applyMeFamiliesResponse, syncDiscordActivitySession]);
+  }, [initialFamily, applyMeFamiliesResponse, syncDiscordActivitySession]);
 
   const triggerRefresh = useCallback(() => {
     if (members.length === 0) return;
@@ -853,6 +922,7 @@ export function FamilyDashboard({
                   onChange={(nextRegion) => {
                     setLoading(true);
                     setRegion(nextRegion);
+                    persistRegionPreference(nextRegion, { syncFamily: true });
                   }}
                   ariaLabel="Pricing region"
                   compact
@@ -972,6 +1042,10 @@ export function FamilyDashboard({
         {!hasActiveRoster ? (
           <FamilyLaunchpad
             initialRegion={region}
+            onRegionChange={(nextRegion) => {
+              setRegion(nextRegion);
+              persistRegionPreference(nextRegion, { syncFamily: false });
+            }}
             hasApiKey={hasApiKey}
             steamUser={steamUser}
             savedFamilies={[

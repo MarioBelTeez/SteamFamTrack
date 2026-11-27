@@ -64,6 +64,7 @@ export interface FamilyLaunchpadProps {
   loading: boolean;
   error: string | null;
   steamUser?: SteamSessionUser | null;
+  onRegionChange?: (region: SteamRegion) => void;
   onLaunch: (payload: {
     region: SteamRegion;
     members: FamilyMemberInput[];
@@ -193,9 +194,14 @@ export function FamilyLaunchpad({
   loading,
   error,
   steamUser = null,
+  onRegionChange,
   onLaunch,
 }: FamilyLaunchpadProps) {
   const [region, setRegion] = useState<SteamRegion>(initialRegion);
+
+  useEffect(() => {
+    setRegion(initialRegion);
+  }, [initialRegion]);
 
   const [draftMembers, setDraftMembers] = useState<FamilyMemberInput[]>(() => [
     {
@@ -1093,7 +1099,10 @@ export function FamilyLaunchpad({
                   </span>
                   <RegionSelect
                     value={region}
-                    onChange={setRegion}
+                    onChange={(nextRegion) => {
+                      setRegion(nextRegion);
+                      onRegionChange?.(nextRegion);
+                    }}
                     ariaLabel="Steam store pricing region"
                     compact
                   />

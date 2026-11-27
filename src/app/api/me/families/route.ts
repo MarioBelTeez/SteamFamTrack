@@ -1,13 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSteamUserFromRequest, loadFamilyRecord } from "@/lib/family-access";
 import { getSteamFamDb } from "@/lib/supabase";
-import type { SavedFamilyData } from "@/lib/types";
+import {
+  STEAM_REGIONS,
+  type SavedFamilyData,
+  type SteamRegion,
+} from "@/lib/types";
 
 export async function GET(req: NextRequest) {
   const user = getSteamUserFromRequest(req);
   if (!user) {
     return NextResponse.json(
-      { user: null, activeFamily: null, waitlistedIn: [] },
+      { user: null, preferredRegion: null, activeFamily: null, waitlistedIn: [] },
       {
         status: 200,
         headers: { "Cache-Control": "no-store" },
@@ -23,17 +27,31 @@ export async function GET(req: NextRequest) {
     );
   }
 
-  const [{ data: ownedRows, error: ownedErr }, { data: memberRows, error: memErr }] =
-    await Promise.all([
-      db
-        .from("families")
-        .select("id")
-        .eq("owner_steam_id64", user.steamId64),
-      db
-        .from("family_members")
-        .select("family_id, is_waitlist")
-        .eq("steam_id64", user.steamId64),
-    ]);
+  const [
+    { data: ownedRows, error: ownedErr },
+    { data: memberRows, error: memErr },
+    { data: prefRow },
+  ] = await Promise.all([
+    db
+      .from("families")
+      .select("id")
+      .eq("owner_steam_id64", user.steamId64),
+    db
+      .from("family_members")
+      .select("family_id, is_waitlist")
+      .eq("steam_id64", user.steamId64),
+    db
+      .from("steam_preferences")
+      .select("preferred_region")
+      .eq("steam_id64", user.steamId64)
+      .maybeSingle(),
+  ]);
+
+  const preferredRegion: SteamRegion | null =
+    typeof prefRow?.preferred_region === "string" &&
+    prefRow.preferred_region in STEAM_REGIONS
+      ? (prefRow.preferred_region as SteamRegion)
+      : null;
 
   if (ownedErr || memErr) {
     return NextResponse.json(
@@ -68,7 +86,7 @@ export async function GET(req: NextRequest) {
   );
 
   return NextResponse.json(
-    { user, activeFamily, waitlistedIn },
+    { user, preferredRegion, activeFamily, waitlistedIn },
     {
       status: 200,
       headers: { "Cache-Control": "no-store" },
