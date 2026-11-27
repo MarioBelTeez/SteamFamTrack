@@ -366,11 +366,47 @@ function simulateSwapFromLibraries(
   };
 }
 
+function getBotChannelRestriction(): {
+  guildId: string;
+  allowedChannelIds: Set<string>;
+  redirectChannelId: string;
+} | null {
+  const guildId = process.env.BOT_ONLY_GUILD_ID?.trim();
+  const rawChannels = process.env.BOT_ONLY_CHANNEL_IDS?.trim();
+  if (!guildId || !rawChannels) return null;
+
+  const list = rawChannels
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  if (list.length === 0) return null;
+
+  return {
+    guildId,
+    allowedChannelIds: new Set(list),
+    redirectChannelId:
+      process.env.BOT_REDIRECT_CHANNEL_ID?.trim() || list[0],
+  };
+}
+
 export async function handleInteraction(
   interaction: ChatInputCommandInteraction
 ): Promise<void> {
   if (interaction.commandName === "link") {
     await handleLink(interaction);
+    return;
+  }
+
+  const restriction = getBotChannelRestriction();
+  if (
+    restriction &&
+    interaction.guildId === restriction.guildId &&
+    !restriction.allowedChannelIds.has(interaction.channelId)
+  ) {
+    await interaction.reply({
+      content: `👋 Please use SteamFT commands in <#${restriction.redirectChannelId}> so we keep this channel clean!`,
+      ephemeral: true,
+    });
     return;
   }
 
