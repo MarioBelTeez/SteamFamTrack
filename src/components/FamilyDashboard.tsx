@@ -7,6 +7,7 @@ import type { DiscordSDK } from "@discord/embedded-app-sdk";
 import { CommunityLinksCard } from "@/components/CommunityLinksCard";
 import {
   authorizeDiscordActivity,
+  type DiscordActivityAuthResult,
   isDiscordActivityEnvironment,
   openExternalUrl,
   patchDiscordActivityUrls,
@@ -153,6 +154,8 @@ type AccountSavedFamily = SavedFamilyData & {
 };
 
 const REGION_STORAGE_KEY = "steamfam_preferred_region";
+const PUBLIC_SITE_URL =
+  process.env.NEXT_PUBLIC_SITE_URL?.trim() || "https://steamft.com";
 
 function parseSteamRegion(value: unknown): SteamRegion | null {
   if (typeof value === "string" && value in STEAM_REGIONS) {
@@ -384,7 +387,7 @@ export function FamilyDashboard({
     [initialFamily, loadSavedFamily]
   );
 
-  const syncDiscordActivitySession = useCallback(async () => {
+  const syncDiscordActivitySession = useCallback(async (): Promise<DiscordActivityAuthResult | null> => {
     setDiscordActivityLoading(true);
     try {
       const { sdk, auth } = await authorizeDiscordActivity();
@@ -405,12 +408,42 @@ export function FamilyDashboard({
           linkToken: auth.linkToken,
         });
       }
+      return auth;
     } catch {
       // Non-fatal: user can still use Preview Sandbox or manual launch
+      return null;
     } finally {
       setDiscordActivityLoading(false);
     }
   }, [applyMeFamiliesResponse]);
+
+  const handleDiscordSteamSignIn = useCallback(
+    async (e: MouseEvent<HTMLAnchorElement>) => {
+      if (!isDiscordActivity) return;
+      e.preventDefault();
+
+      if (discordUnlinked?.linkToken) {
+        await openExternalUrl(
+          `${PUBLIC_SITE_URL}/api/auth/steam?discord_link=${encodeURIComponent(
+            discordUnlinked.linkToken
+          )}`,
+          discordSdkRef.current
+        );
+        return;
+      }
+
+      const auth = await syncDiscordActivitySession();
+      if (auth && !auth.linked && auth.linkToken) {
+        await openExternalUrl(
+          `${PUBLIC_SITE_URL}/api/auth/steam?discord_link=${encodeURIComponent(
+            auth.linkToken
+          )}`,
+          discordSdkRef.current
+        );
+      }
+    },
+    [discordUnlinked, isDiscordActivity, syncDiscordActivitySession]
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -760,6 +793,9 @@ export function FamilyDashboard({
   ) : hasApiKey ? (
     <a
       href="/api/auth/steam"
+      onClick={(e) => {
+        void handleDiscordSteamSignIn(e);
+      }}
       className="inline-flex items-center gap-1.5 border border-bt-border bg-bt-surface hover:border-bt-red text-white font-condensed font-bold uppercase tracking-wider text-xs px-3 py-1.5 cursor-pointer transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-bt-red"
     >
       <LogIn className="h-3.5 w-3.5 text-bt-red shrink-0" />
@@ -1007,11 +1043,8 @@ export function FamilyDashboard({
               <button
                 type="button"
                 onClick={() => {
-                  const baseUrl =
-                    process.env.NEXT_PUBLIC_SITE_URL?.trim() ||
-                    "https://steam-fam-track-zdp6.vercel.app";
                   void openExternalUrl(
-                    `${baseUrl}/api/auth/steam?discord_link=${encodeURIComponent(
+                    `${PUBLIC_SITE_URL}/api/auth/steam?discord_link=${encodeURIComponent(
                       discordUnlinked.linkToken
                     )}`,
                     discordSdkRef.current
@@ -1046,6 +1079,13 @@ export function FamilyDashboard({
               setRegion(nextRegion);
               persistRegionPreference(nextRegion, { syncFamily: false });
             }}
+            onSteamSignIn={
+              isDiscordActivity
+                ? (e) => {
+                    void handleDiscordSteamSignIn(e);
+                  }
+                : undefined
+            }
             hasApiKey={hasApiKey}
             steamUser={steamUser}
             savedFamilies={[
@@ -1639,6 +1679,13 @@ export function FamilyDashboard({
         waitlist={waitlist}
         analysis={analysis}
         steamUser={steamUser}
+        onSteamSignIn={
+          isDiscordActivity
+            ? (e) => {
+                void handleDiscordSteamSignIn(e);
+              }
+            : undefined
+        }
         onSaved={(fam: AccountSavedFamily) => {
           isPreviewModeRef.current = false;
           setIsPreviewMode(false);
