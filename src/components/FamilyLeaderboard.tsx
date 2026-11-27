@@ -550,93 +550,62 @@ export function FamilyLeaderboard({
             </div>
           </div>
 
-          {/* Member Trophy Rack (click a member to filter their trophies) */}
+          {/* Compact Member Trophy Filter Strip (1 clean row instead of a wall of boxes) */}
           {trophyCounts.length > 0 && (
-            <div className="border-b border-bt-border bg-bt-bg/60 px-5 py-4 space-y-2.5">
-              <div className="flex items-center justify-between gap-2 font-mono text-[10px] uppercase tracking-[0.16em] text-bt-muted">
-                <span>TROPHY STANDINGS // CLICK A MEMBER TO FILTER</span>
-                {selectedTrophyMemberId && (
-                  <button
-                    type="button"
-                    onClick={() => setSelectedTrophyMemberId(null)}
-                    className="cursor-pointer text-bt-red hover:underline font-bold"
-                  >
-                    CLEAR FILTER
-                  </button>
-                )}
-              </div>
+            <div className="border-b border-bt-border bg-bt-bg/60 px-5 py-3 flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setSelectedTrophyMemberId(null)}
+                className={`cursor-pointer inline-flex items-center gap-1.5 border px-2.5 py-1 font-mono text-[11px] uppercase tracking-[0.12em] transition-colors ${
+                  selectedTrophyMemberId === null
+                    ? "border-bt-red bg-bt-red text-white font-bold"
+                    : "border-bt-border bg-bt-surface text-bt-muted hover:border-bt-red/60 hover:text-white"
+                }`}
+              >
+                <span>All Trophies</span>
+                <span className="opacity-80 tabular-nums">({achievements.length})</span>
+              </button>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-2.5">
-                {trophyCounts.map((member) => {
+              {trophyCounts
+                .filter((m) => m.trophies.length > 0)
+                .map((member) => {
                   const isSelected = selectedTrophyMemberId === member.memberId;
                   return (
                     <button
-                      key={`rack-${member.role}-${member.memberId}`}
+                      key={`pill-${member.role}-${member.memberId}`}
                       type="button"
                       onClick={() =>
                         setSelectedTrophyMemberId((prev) =>
                           prev === member.memberId ? null : member.memberId
                         )
                       }
-                      className={`cursor-pointer text-left border px-3 py-2.5 flex items-center justify-between gap-3 transition-colors ${
+                      className={`cursor-pointer inline-flex items-center gap-2 border pl-1.5 pr-2.5 py-1 transition-colors ${
                         isSelected
-                          ? "border-bt-red bg-bt-red/15"
-                          : "border-bt-border bg-bt-surface hover:border-bt-red/60"
+                          ? "border-bt-red bg-bt-red/20 text-white"
+                          : "border-bt-border bg-bt-surface text-white/85 hover:border-bt-red/60"
                       }`}
                     >
-                      <div className="flex items-center gap-2.5 min-w-0">
-                        <MemberAvatar
-                          avatarUrl={member.avatarUrl}
-                          name={member.name}
-                          highlighted={member.trophies.length > 0}
-                          size="sm"
-                        />
-                        <div className="min-w-0">
-                          <div className="font-condensed text-sm font-bold uppercase tracking-wide text-white truncate">
-                            {member.name}
-                          </div>
-                          <div className="mt-0.5 flex flex-wrap gap-1">
-                            {member.trophies.length > 0 ? (
-                              member.trophies.map((t) => (
-                                <span
-                                  key={t.id}
-                                  className={`border px-1.5 py-0 font-mono text-[9px] font-bold uppercase tracking-wider ${BADGE_TONE_STYLES[t.accent]}`}
-                                >
-                                  {t.title}
-                                </span>
-                              ))
-                            ) : (
-                              <span className="font-mono text-[10px] text-bt-dim">
-                                Hunting first trophy
-                              </span>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-
-                      <div className="shrink-0 text-right font-mono tabular-nums">
-                        <span
-                          className={`font-display text-2xl leading-none ${
-                            member.trophies.length > 0
-                              ? "text-bt-red"
-                              : "text-bt-dim"
-                          }`}
-                        >
-                          {member.trophies.length}
-                        </span>
-                        <div className="text-[9px] uppercase tracking-wider text-bt-muted">
-                          {member.trophies.length === 1 ? "TROPHY" : "TROPHIES"}
-                        </div>
-                      </div>
+                      <MemberAvatar
+                        avatarUrl={member.avatarUrl}
+                        name={member.name}
+                        highlighted={isSelected}
+                        size="sm"
+                      />
+                      <span className="font-condensed text-xs font-bold uppercase tracking-wider max-w-[110px] truncate">
+                        {member.name}
+                      </span>
+                      <span className="inline-flex items-center gap-0.5 font-mono text-[11px] font-bold text-bt-red tabular-nums">
+                        <Trophy className="h-3 w-3" aria-hidden="true" />
+                        {member.trophies.length}
+                      </span>
                     </button>
                   );
                 })}
-              </div>
             </div>
           )}
 
-          {/* Compact Trophy Shelf (Winner + Runner-Up) */}
-          <div className="p-5 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3.5">
+          {/* Medal Tile Showcase Grid */}
+          <div className="p-5 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
             {displayedAchievements.length === 0 ? (
               <div className="col-span-full font-mono text-xs text-bt-muted py-4">
                 No trophies match the selected filter.
@@ -650,59 +619,55 @@ export function FamilyLeaderboard({
                 return (
                   <div
                     key={ach.id}
-                    className={`border p-4 flex flex-col justify-between gap-3 transition-colors ${
+                    className={`border p-4 flex flex-col justify-between gap-3.5 transition-colors ${
                       isHighlight
-                        ? "border-bt-red/50 bg-gradient-to-br from-bt-red/10 via-bt-surface to-bt-surface"
-                        : "border-bt-border bg-bt-elevated/45"
+                        ? "border-bt-red/50 bg-gradient-to-b from-bt-red/12 via-bt-surface to-bt-surface"
+                        : "border-bt-border bg-bt-elevated/45 hover:border-bt-border/90"
                     }`}
                   >
-                    <div className="flex items-start justify-between gap-2">
-                      <div>
-                        <span
-                          className={`inline-flex items-center border px-2 py-0.5 font-mono text-[10px] font-bold uppercase tracking-[0.14em] ${BADGE_TONE_STYLES[tone]}`}
-                        >
+                    {/* Emblem + Title */}
+                    <div className="flex items-center gap-3">
+                      <div
+                        className={`h-9 w-9 shrink-0 border flex items-center justify-center ${BADGE_TONE_STYLES[tone]}`}
+                      >
+                        <Icon className="h-4 w-4" aria-hidden="true" />
+                      </div>
+                      <div className="min-w-0">
+                        <div className="font-condensed text-sm font-bold uppercase tracking-wider text-white leading-tight truncate">
                           {ach.title}
-                        </span>
-                        <div className="mt-1 font-mono text-[10px] uppercase tracking-[0.14em] text-bt-muted">
+                        </div>
+                        <div className="font-mono text-[10px] text-bt-muted truncate">
                           {ach.subtitle}
                         </div>
                       </div>
-                      <Icon
-                        className={`h-4 w-4 shrink-0 ${
-                          isHighlight ? "text-bt-red" : "text-white/75"
-                        }`}
-                        aria-hidden="true"
-                      />
                     </div>
 
+                    {/* Hero Stat + Winner */}
                     {ach.winner ? (
-                      <div className="flex items-center justify-between gap-3">
-                        <div className="flex items-center gap-2.5 min-w-0">
+                      <div className="space-y-2.5">
+                        <div
+                          className={`font-display text-3xl leading-none tracking-wide tabular-nums ${
+                            isHighlight ? "text-bt-red" : "text-white"
+                          }`}
+                        >
+                          {ach.winner.statText}
+                        </div>
+                        <div className="flex items-center gap-2 min-w-0">
                           <MemberAvatar
                             avatarUrl={ach.winner.avatarUrl}
                             name={ach.winner.name}
                             highlighted={isHighlight}
                             size="sm"
                           />
-                          <div className="min-w-0">
-                            <div className="font-condensed text-base font-bold uppercase tracking-wide text-white truncate">
+                          <div className="min-w-0 flex-1">
+                            <div className="font-condensed text-sm font-bold uppercase tracking-wide text-white truncate">
                               {ach.winner.name}
                             </div>
                             {ach.winner.subText && (
-                              <div className="font-mono text-[10px] text-bt-muted truncate max-w-[180px]">
+                              <div className="font-mono text-[10px] text-bt-muted truncate">
                                 {ach.winner.subText}
                               </div>
                             )}
-                          </div>
-                        </div>
-
-                        <div className="shrink-0 text-right font-mono tabular-nums">
-                          <div
-                            className={`text-sm font-bold ${
-                              isHighlight ? "text-bt-red" : "text-white"
-                            }`}
-                          >
-                            {ach.winner.statText}
                           </div>
                         </div>
                       </div>
@@ -712,12 +677,13 @@ export function FamilyLeaderboard({
                       </div>
                     )}
 
+                    {/* Subtle 2nd place line */}
                     {ach.runnerUp && (
                       <div className="border-t border-bt-border/60 pt-2 flex items-center justify-between gap-2 font-mono text-[10px] text-bt-muted">
                         <span className="truncate">
-                          2nd: <span className="text-white/80">{ach.runnerUp.name}</span>
+                          2nd <span className="text-white/80">{ach.runnerUp.name}</span>
                         </span>
-                        <span className="shrink-0 tabular-nums text-white/75 truncate max-w-[160px]">
+                        <span className="shrink-0 tabular-nums text-white/70 truncate max-w-[110px]">
                           {ach.runnerUp.statText}
                         </span>
                       </div>
