@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSteamUserFromRequest } from "@/lib/family-access";
 import { getSteamFamDb } from "@/lib/supabase";
+import { isValidThemeId, type ThemeId } from "@/lib/themes";
 import { STEAM_REGIONS, type SteamRegion } from "@/lib/types";
 
 function parseRegion(value: unknown): SteamRegion | null {
@@ -10,11 +11,15 @@ function parseRegion(value: unknown): SteamRegion | null {
   return null;
 }
 
+function parseTheme(value: unknown): ThemeId | null {
+  return isValidThemeId(value) ? value : null;
+}
+
 export async function GET(req: NextRequest) {
   const user = getSteamUserFromRequest(req);
   if (!user) {
     return NextResponse.json(
-      { user: null, preferredRegion: null },
+      { user: null, preferredRegion: null, preferredTheme: null },
       { status: 200, headers: { "Cache-Control": "no-store" } }
     );
   }
@@ -22,21 +27,23 @@ export async function GET(req: NextRequest) {
   const db = getSteamFamDb();
   if (!db) {
     return NextResponse.json(
-      { user, preferredRegion: null },
+      { user, preferredRegion: null, preferredTheme: null },
       { status: 200, headers: { "Cache-Control": "no-store" } }
     );
   }
 
   const { data } = await db
     .from("steam_preferences")
-    .select("preferred_region")
+    .select("preferred_region, preferred_theme")
     .eq("steam_id64", user.steamId64)
     .maybeSingle();
 
-  const preferredRegion = parseRegion(data?.preferred_region);
-
   return NextResponse.json(
-    { user, preferredRegion },
+    {
+      user,
+      preferredRegion: parseRegion(data?.preferred_region),
+      preferredTheme: parseTheme(data?.preferred_theme),
+    },
     { status: 200, headers: { "Cache-Control": "no-store" } }
   );
 }
@@ -58,29 +65,51 @@ export async function PATCH(req: NextRequest) {
     );
   }
 
-  let body: { region?: unknown };
+  let body: { region?: unknown; theme?: unknown };
   try {
-    body = (await req.json()) as { region?: unknown };
+    body = (await req.json()) as { region?: unknown; theme?: unknown };
   } catch {
     return NextResponse.json({ error: "Invalid JSON body." }, { status: 400 });
   }
 
-  const region = parseRegion(body?.region);
-  if (!region) {
+  const hasRegion = body?.region !== undefined;
+  const hasTheme = body?.theme !== undefined;
+
+  if (!hasRegion && !hasTheme) {
+    return NextResponse.json(
+      { error: "Provide a region or theme to update." },
+      { status: 400 }
+    );
+  }
+
+  const region = hasRegion ? parseRegion(body.region) : null;
+  if (hasRegion && !region) {
     return NextResponse.json(
       { error: "Unsupported Steam pricing region." },
       { status: 400 }
     );
   }
 
-  const { error } = await db.from("steam_preferences").upsert(
-    {
-      steam_id64: user.steamId64,
-      preferred_region: region,
-      updated_at: new Date().toISOString(),
-    },
-    { onConflict: "steam_id64" }
-  );
+  const theme = hasTheme ? parseTheme(body.theme) : null;
+  if (hasTheme && !theme) {
+    return NextResponse.json(
+      { error: "Unsupported theme ID." },
+      { status: 400 }
+    );
+  }
+
+  const upsertPayload: Record<string, string> = {
+    steam_id64: user.steamId64,
+    updated_at: new Date().toISOString(),
+  };
+  if (region) upsertPayload.preferred_region = region;
+  if (theme) upsertPayload.preferred_theme = theme;
+
+  const { data, error } = await db
+    .from("steam_preferences")
+    .upsert(upsertPayload, { onConflict: "steam_id64" })
+    .select("preferred_region, preferred_theme")
+    .maybeSingle();
 
   if (error) {
     return NextResponse.json(
@@ -90,7 +119,10 @@ export async function PATCH(req: NextRequest) {
   }
 
   return NextResponse.json(
-    { preferredRegion: region },
+    {
+      preferredRegion: parseRegion(data?.preferred_region) ?? region,
+      preferredTheme: parseTheme(data?.preferred_theme) ?? theme,
+    },
     { status: 200, headers: { "Cache-Control": "no-store" } }
   );
 }

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSteamUserFromRequest, loadFamilyRecord } from "@/lib/family-access";
 import { getSteamFamDb } from "@/lib/supabase";
+import { isValidThemeId, type ThemeId } from "@/lib/themes";
 import {
   STEAM_REGIONS,
   type SavedFamilyData,
@@ -11,7 +12,13 @@ export async function GET(req: NextRequest) {
   const user = getSteamUserFromRequest(req);
   if (!user) {
     return NextResponse.json(
-      { user: null, preferredRegion: null, activeFamily: null, waitlistedIn: [] },
+      {
+        user: null,
+        preferredRegion: null,
+        preferredTheme: null,
+        activeFamily: null,
+        waitlistedIn: [],
+      },
       {
         status: 200,
         headers: { "Cache-Control": "no-store" },
@@ -42,7 +49,7 @@ export async function GET(req: NextRequest) {
       .eq("steam_id64", user.steamId64),
     db
       .from("steam_preferences")
-      .select("preferred_region")
+      .select("preferred_region, preferred_theme")
       .eq("steam_id64", user.steamId64)
       .maybeSingle(),
   ]);
@@ -52,6 +59,12 @@ export async function GET(req: NextRequest) {
     prefRow.preferred_region in STEAM_REGIONS
       ? (prefRow.preferred_region as SteamRegion)
       : null;
+
+  const preferredTheme: ThemeId | null = isValidThemeId(
+    prefRow?.preferred_theme
+  )
+    ? prefRow.preferred_theme
+    : null;
 
   if (ownedErr || memErr) {
     return NextResponse.json(
@@ -86,7 +99,7 @@ export async function GET(req: NextRequest) {
   );
 
   return NextResponse.json(
-    { user, preferredRegion, activeFamily, waitlistedIn },
+    { user, preferredRegion, preferredTheme, activeFamily, waitlistedIn },
     {
       status: 200,
       headers: { "Cache-Control": "no-store" },

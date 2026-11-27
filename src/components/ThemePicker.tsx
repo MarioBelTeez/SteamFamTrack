@@ -22,7 +22,17 @@ import {
   Sun,
 } from "lucide-react";
 
-const THEME_CHANGE_EVENT = "sft-theme-change";
+export const THEME_CHANGE_EVENT = "sft-theme-change";
+
+export function syncThemeAcrossApp(nextId: ThemeId): void {
+  saveStoredThemeId(nextId);
+  applyThemeToDocument(nextId);
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(
+      new CustomEvent<ThemeId>(THEME_CHANGE_EVENT, { detail: nextId })
+    );
+  }
+}
 
 export function useAppTheme() {
   const [themeId, setThemeId] = useState<ThemeId>(DEFAULT_THEME_ID);
@@ -47,9 +57,12 @@ export function useAppTheme() {
   const selectTheme = useCallback((nextId: ThemeId) => {
     setThemeId(nextId);
     setPreviewId(null);
-    saveStoredThemeId(nextId);
-    applyThemeToDocument(nextId);
-    window.dispatchEvent(new CustomEvent<ThemeId>(THEME_CHANGE_EVENT, { detail: nextId }));
+    syncThemeAcrossApp(nextId);
+    fetch("/api/me/preferences", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ theme: nextId }),
+    }).catch(() => {});
   }, []);
 
   const startPreview = useCallback((nextId: ThemeId) => {

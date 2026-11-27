@@ -29,7 +29,9 @@ import { SwapSimulator } from "@/components/SwapSimulator";
 import {
   HeaderThemeSwitcher,
   ThemeGalleryTab,
+  syncThemeAcrossApp,
 } from "@/components/ThemePicker";
+import { isValidThemeId, type ThemeId } from "@/lib/themes";
 import {
   FamilyAnalysis,
   FamilyMemberInput,
@@ -183,6 +185,7 @@ function writeStoredRegion(region: SteamRegion): void {
 interface MeFamiliesResponse {
   user?: SteamSessionUser | null;
   preferredRegion?: SteamRegion | null;
+  preferredTheme?: ThemeId | null;
   activeFamily?: AccountSavedFamily | null;
   waitlistedIn?: AccountSavedFamily[];
 }
@@ -374,6 +377,9 @@ export function FamilyDashboard({
       if (acctRegion) {
         writeStoredRegion(acctRegion);
         setRegion(acctRegion);
+      }
+      if (isValidThemeId(d?.preferredTheme)) {
+        syncThemeAcrossApp(d.preferredTheme);
       }
       if (
         !initialFamily &&
