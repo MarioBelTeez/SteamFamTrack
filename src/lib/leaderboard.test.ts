@@ -8,7 +8,9 @@ const { analyzeFamily } = (await import(
 const {
   assignTierGrade,
   buildPowerRankings,
+  computePowerBreakdown,
   computePowerScore,
+  sortPowerRankings,
   summarizeWaitlistLibrary,
 } = (await import(
   `./leaderboard${".ts"}`
@@ -115,5 +117,34 @@ describe("summarizeWaitlistLibrary & buildPowerRankings", () => {
     assert.equal(rankings[1].name, "Alpha");
     assert.equal(rankings[1].role, "ACTIVE");
     assert.equal(rankings[1].sharePercent, 100);
+  });
+
+  it("computes power breakdown, avgGameValue, exclusivityPct, badges, and sorting", () => {
+    const breakdown = computePowerBreakdown(100, 10, 20, "us");
+    assert.deepEqual(breakdown, {
+      valuePoints: 100,
+      exclusivePoints: 50,
+      volumePoints: 10,
+    });
+
+    const a1 = makeLibrary("a1", "Alpha", [
+      makeGame(1, "Shared", 20),
+      makeGame(2, "Indie", 10),
+    ]);
+    const a2 = makeLibrary("a2", "Bravo", [
+      makeGame(1, "Shared", 20),
+      makeGame(3, "AAA", 70),
+    ]);
+    const analysis = analyzeFamily([a1, a2], "us", false);
+    const rankings = buildPowerRankings(analysis, [], new Map(), "us");
+
+    assert.equal(rankings[0]?.memberId, "a2");
+    assert.equal(rankings[0]?.avgGameValue, 45);
+    assert.equal(rankings[0]?.exclusivityPct, 50);
+    assert.ok(rankings[0]?.badges.some((b) => b.id === "mvp"));
+    assert.ok(rankings[0]?.badges.some((b) => b.id === "whale"));
+
+    const byAvgAsc = sortPowerRankings(rankings, "avgGameValue", "asc");
+    assert.equal(byAvgAsc[0]?.memberId, "a1");
   });
 });

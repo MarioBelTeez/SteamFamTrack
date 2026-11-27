@@ -6,6 +6,29 @@ import type {
 
 export type TierGrade = "S" | "A" | "B" | "C";
 
+export type LeaderboardSortKey =
+  | "powerScore"
+  | "totalRawValue"
+  | "totalGames"
+  | "exclusiveGames"
+  | "exclusivityPct"
+  | "avgGameValue"
+  | "sharePercent";
+
+export type SortDirection = "asc" | "desc";
+
+export interface LeaderboardBadge {
+  id: string;
+  label: string;
+  tone: "crimson" | "gold" | "emerald" | "sky" | "amber";
+}
+
+export interface PowerBreakdown {
+  valuePoints: number;
+  exclusivePoints: number;
+  volumePoints: number;
+}
+
 /**
  * Approximate regional unit multiplier relative to USD so composite Power Score
  * balances Value + Exclusive Bonus + Library Size fairly across currencies
@@ -38,9 +61,28 @@ export interface PowerRankingEntry {
   totalGames: number;
   exclusiveGames: number;
   totalRawValue: number;
+  exclusiveValue: number;
+  avgGameValue: number;
+  exclusivityPct: number;
   sharePercent: number | null;
   powerScore: number;
+  powerBreakdown: PowerBreakdown;
   tier: TierGrade;
+  badges: LeaderboardBadge[];
+}
+
+export function computePowerBreakdown(
+  totalRawValue: number,
+  exclusiveGames: number,
+  totalGames: number,
+  region: SteamRegion = "us"
+): PowerBreakdown {
+  const normalizedValue = totalRawValue * (REGION_TO_USD_SCALE[region] ?? 1);
+  return {
+    valuePoints: Math.round(normalizedValue),
+    exclusivePoints: Math.round(exclusiveGames * 5),
+    volumePoints: Math.round(totalGames * 0.5),
+  };
 }
 
 export function computePowerScore(
@@ -94,6 +136,10 @@ export function summarizeWaitlistLibrary(
   };
 }
 
+function roundTwo(val: number): number {
+  return Math.round(val * 100) / 100;
+}
+
 export function buildPowerRankings(
   analysis: FamilyAnalysis,
   waitlistSummaries: WaitlistLibrarySummary[],
@@ -103,9 +149,12 @@ export function buildPowerRankings(
   >,
   region: SteamRegion
 ): PowerRankingEntry[] {
-  const rawEntries: Array<Omit<PowerRankingEntry, "tier">> = [
+  const rawEntries: Array<Omit<PowerRankingEntry, "tier" | "badges">> = [
     ...analysis.members.map((m) => {
       const fallback = memberIdentityById.get(m.memberId);
+      const avgGameValue = m.totalGames > 0 ? roundTwo(m.totalRawValue / m.totalGames) : 0;
+      const exclusivityPct =
+        m.totalGames > 0 ? Math.round((m.exclusiveGames / m.totalGames) * 1000) / 10 : 0;
       return {
         memberId: m.memberId,
         name: m.name,
@@ -116,6 +165,9 @@ export function buildPowerRankings(
         totalGames: m.totalGames,
         exclusiveGames: m.exclusiveGames,
         totalRawValue: m.totalRawValue,
+        exclusiveValue: m.exclusiveValue,
+        avgGameValue,
+        exclusivityPct,
         sharePercent: m.sharePercent,
         powerScore: computePowerScore(
           m.totalRawValue,
@@ -123,26 +175,46 @@ export function buildPowerRankings(
           m.totalGames,
           region
         ),
+        powerBreakdown: computePowerBreakdown(
+          m.totalRawValue,
+          m.exclusiveGames,
+          m.totalGames,
+          region
+        ),
       };
     }),
-    ...waitlistSummaries.map((w) => ({
-      memberId: w.lib.member.id,
-      name: w.lib.member.name,
-      personaName: w.lib.personaName || w.lib.member.name,
-      avatarUrl: w.lib.avatarUrl,
-      steamId64: w.lib.steamId64,
-      role: "WAITLIST" as const,
-      totalGames: w.totalGames,
-      exclusiveGames: w.exclusiveGames,
-      totalRawValue: w.totalRawValue,
-      sharePercent: null,
-      powerScore: computePowerScore(
-        w.totalRawValue,
-        w.exclusiveGames,
-        w.totalGames,
-        region
-      ),
-    })),
+    ...waitlistSummaries.map((w) => {
+      const avgGameValue = w.totalGames > 0 ? roundTwo(w.totalRawValue / w.totalGames) : 0;
+      const exclusivityPct =
+        w.totalGames > 0 ? Math.round((w.exclusiveGames / w.totalGames) * 1000) / 10 : 0;
+      return {
+        memberId: w.lib.member.id,
+        name: w.lib.member.name,
+        personaName: w.lib.personaName || w.lib.member.name,
+        avatarUrl: w.lib.avatarUrl,
+        steamId64: w.lib.steamId64,
+        role: "WAITLIST" as const,
+        totalGames: w.totalGames,
+        exclusiveGames: w.exclusiveGames,
+        totalRawValue: w.totalRawValue,
+        exclusiveValue: w.netNewValue,
+        avgGameValue,
+        exclusivityPct,
+        sharePercent: null,
+        powerScore: computePowerScore(
+          w.totalRawValue,
+          w.exclusiveGames,
+          w.totalGames,
+          region
+        ),
+        powerBreakdown: computePowerBreakdown(
+          w.totalRawValue,
+          w.exclusiveGames,
+          w.totalGames,
+          region
+        ),
+      };
+    }),
   ];
 
   rawEntries.sort(
@@ -154,8 +226,78 @@ export function buildPowerRankings(
 
   const maxScore = rawEntries[0]?.powerScore ?? 0;
 
-  return rawEntries.map((entry) => ({
-    ...entry,
-    tier: assignTierGrade(entry.powerScore, maxScore),
-  }));
+  // Determine badge holders
+  const activeEntries = rawEntries.filter((e) => e.role === "ACTIVE");
+  const waitlistEntries = rawEntries.filter((e) => e.role === "WAITLIST");
+
+  const whaleId =
+    [...activeEntries].sort((a, b) => b.totalRawValue - a.totalRawValue)[0]
+      ?.memberId ?? null;
+  const kingId =
+    [...activeEntries].sort((a, b) => b.totalGames - a.totalGames)[0]
+      ?.memberId ?? null;
+  const exclusiveId =
+    [...activeEntries].sort((a, b) => b.exclusiveGames - a.exclusiveGames)[0]
+      ?.memberId ?? null;
+  const highRollerPool = activeEntries.filter((e) => e.totalGames >= 5);
+  const highRollerCandidates = highRollerPool.length > 0 ? highRollerPool : activeEntries;
+  const highRollerId =
+    [...highRollerCandidates].sort((a, b) => b.avgGameValue - a.avgGameValue)[0]
+      ?.memberId ?? null;
+  const topBenchId =
+    [...waitlistEntries].sort((a, b) => b.exclusiveValue - a.exclusiveValue)[0]
+      ?.memberId ?? null;
+  const upNextId = analysis.fairness.upNextMemberId;
+
+  return rawEntries.map((entry, index) => {
+    const badges: LeaderboardBadge[] = [];
+    if (index === 0 && entry.powerScore > 0) {
+      badges.push({ id: "mvp", label: "#1 MVP", tone: "crimson" });
+    }
+    if (entry.role === "ACTIVE" && entry.memberId === whaleId && entry.totalRawValue > 0) {
+      badges.push({ id: "whale", label: "WHALE", tone: "gold" });
+    }
+    if (entry.role === "ACTIVE" && entry.memberId === kingId && entry.totalGames > 0) {
+      badges.push({ id: "library-king", label: "LIB KING", tone: "sky" });
+    }
+    if (entry.role === "ACTIVE" && entry.memberId === exclusiveId && entry.exclusiveGames > 0) {
+      badges.push({ id: "exclusive", label: "SOLO DEALER", tone: "emerald" });
+    }
+    if (
+      entry.role === "ACTIVE" &&
+      entry.memberId === highRollerId &&
+      entry.avgGameValue > 0 &&
+      entry.memberId !== whaleId
+    ) {
+      badges.push({ id: "high-roller", label: "HIGH ROLLER", tone: "gold" });
+    }
+    if (entry.role === "ACTIVE" && entry.memberId === upNextId) {
+      badges.push({ id: "up-next", label: "UP NEXT", tone: "crimson" });
+    }
+    if (entry.role === "WAITLIST" && entry.memberId === topBenchId && entry.exclusiveValue > 0) {
+      badges.push({ id: "bench-mvp", label: "BENCH MVP", tone: "amber" });
+    }
+
+    return {
+      ...entry,
+      tier: assignTierGrade(entry.powerScore, maxScore),
+      badges: badges.slice(0, 3),
+    };
+  });
+}
+
+export function sortPowerRankings(
+  entries: PowerRankingEntry[],
+  sortKey: LeaderboardSortKey,
+  direction: SortDirection = "desc"
+): PowerRankingEntry[] {
+  const dir = direction === "asc" ? 1 : -1;
+  return [...entries].sort((a, b) => {
+    const aVal = a[sortKey] ?? -1;
+    const bVal = b[sortKey] ?? -1;
+    if (aVal !== bVal) {
+      return (aVal - bVal) * dir;
+    }
+    return b.powerScore - a.powerScore || a.name.localeCompare(b.name);
+  });
 }
