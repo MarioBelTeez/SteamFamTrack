@@ -2,9 +2,11 @@
 
 import { useMemo, useState } from "react";
 import {
+  buildFamilyAchievements,
   buildPowerRankings,
   sortPowerRankings,
   summarizeWaitlistLibrary,
+  type AchievementCategory,
   type LeaderboardBadge,
   type LeaderboardSortKey,
   type PowerRankingEntry,
@@ -22,16 +24,18 @@ import {
   ArrowUp,
   ArrowUpDown,
   Award,
+  Clock,
   Crosshair,
   Crown,
   Flame,
+  Gamepad2,
   Gem,
   HeartHandshake,
   Library,
   Sparkles,
   Swords,
   Trophy,
-  UserX,
+  Users,
 } from "lucide-react";
 
 interface FamilyLeaderboardProps {
@@ -42,22 +46,23 @@ interface FamilyLeaderboardProps {
   includeExcluded?: boolean;
 }
 
-interface AwardCardData {
-  id: string;
-  index: string;
-  title: string;
-  subtitle: string;
-  winnerName: string;
-  winnerPersona?: string;
-  avatarUrl: string;
-  statValue: string;
-  statLabel: string;
-  accent?: "crimson" | "default";
-  emptyMessage?: string;
-  icon: typeof Crown;
-}
+const ACHIEVEMENT_ICONS: Record<string, typeof Crown> = {
+  "high-roller": Sparkles,
+  purist: Gem,
+  "crown-jewel": Crown,
+  "team-player": Users,
+  "no-lifer": Clock,
+  "one-trick": Gamepad2,
+  "biggest-whale": Trophy,
+  "library-king": Library,
+  "exclusive-dealer": Flame,
+  "target-locked": Crosshair,
+  "waitlist-challenger": Swords,
+  "most-generous": HeartHandshake,
+};
 
 type RoleFilter = "ALL" | "ACTIVE" | "WAITLIST";
+type AchievementFilter = "ALL" | AchievementCategory;
 
 function getInitials(name: string): string {
   const cleaned = name.trim();
@@ -78,14 +83,6 @@ function formatMoney(val: number, region: SteamRegion): string {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   })}`;
-}
-
-function formatSignedMoney(val: number, region: SteamRegion): string {
-  if (Math.abs(val) < 0.005) {
-    return formatMoney(0, region);
-  }
-  const sign = val > 0 ? "+" : "-";
-  return `${sign}${formatMoney(Math.abs(val), region)}`;
 }
 
 interface MemberAvatarProps {
@@ -196,6 +193,11 @@ export function FamilyLeaderboard({
 }: FamilyLeaderboardProps) {
   const regionConfig = STEAM_REGIONS[region];
   const [roleFilter, setRoleFilter] = useState<RoleFilter>("ALL");
+  const [achievementFilter, setAchievementFilter] =
+    useState<AchievementFilter>("ALL");
+  const [selectedTrophyMemberId, setSelectedTrophyMemberId] = useState<
+    string | null
+  >(null);
   const [sortKey, setSortKey] = useState<LeaderboardSortKey>("powerScore");
   const [sortDir, setSortDir] = useState<SortDirection>("desc");
   const [compareOpen, setCompareOpen] = useState(false);
@@ -268,288 +270,43 @@ export function FamilyLeaderboard({
     [analysis, waitlistSummaries, memberIdentityById, region]
   );
 
-  const awards = useMemo<AwardCardData[]>(() => {
-    const members = analysis.members;
+  const { achievements, trophyCounts } = useMemo(
+    () =>
+      buildFamilyAchievements(
+        analysis,
+        activeLibraries,
+        waitlistSummaries,
+        rankings,
+        (val) => formatMoney(val, region),
+        includeExcluded
+      ),
+    [
+      analysis,
+      activeLibraries,
+      waitlistSummaries,
+      rankings,
+      region,
+      includeExcluded,
+    ]
+  );
 
-    const biggestWhale =
-      members.length > 0
-        ? [...members].sort(
-            (a, b) =>
-              b.totalRawValue - a.totalRawValue ||
-              b.totalGames - a.totalGames ||
-              a.name.localeCompare(b.name)
-          )[0]
-        : null;
-
-    const libraryKing =
-      members.length > 0
-        ? [...members].sort(
-            (a, b) =>
-              b.totalGames - a.totalGames ||
-              b.totalRawValue - a.totalRawValue ||
-              a.name.localeCompare(b.name)
-          )[0]
-        : null;
-
-    const exclusiveDealer =
-      members.length > 0
-        ? [...members].sort(
-            (a, b) =>
-              b.exclusiveGames - a.exclusiveGames ||
-              b.exclusiveValue - a.exclusiveValue ||
-              a.name.localeCompare(b.name)
-          )[0]
-        : null;
-
-    const soloCarry =
-      members.length > 0
-        ? [...members].sort(
-            (a, b) =>
-              b.exclusiveValue - a.exclusiveValue ||
-              b.exclusiveGames - a.exclusiveGames ||
-              a.name.localeCompare(b.name)
-          )[0]
-        : null;
-
-    const activeRankings = rankings.filter((r) => r.role === "ACTIVE");
-    const highRollerPool = activeRankings.filter((r) => r.totalGames >= 5);
-    const highRollerCandidates =
-      highRollerPool.length > 0 ? highRollerPool : activeRankings;
-    const highRoller =
-      highRollerCandidates.length > 0
-        ? [...highRollerCandidates].sort(
-            (a, b) =>
-              b.avgGameValue - a.avgGameValue ||
-              b.totalRawValue - a.totalRawValue ||
-              a.name.localeCompare(b.name)
-          )[0]
-        : null;
-
-    const fairnessMembers = analysis.fairness.members;
-
-    const mostGenerous =
-      fairnessMembers
-        .filter((m) => m.deltaFromAverageValue > 0.005)
-        .sort(
-          (a, b) =>
-            b.deltaFromAverageValue - a.deltaFromAverageValue ||
-            a.name.localeCompare(b.name)
-        )[0] ?? null;
-
-    const targetLocked =
-      fairnessMembers
-        .filter((m) => m.deltaFromAverageValue < -0.005)
-        .sort(
-          (a, b) =>
-            a.deltaFromAverageValue - b.deltaFromAverageValue ||
-            (a.isUpNext === b.isUpNext ? 0 : a.isUpNext ? -1 : 1) ||
-            a.name.localeCompare(b.name)
-        )[0] ?? null;
-
-    const topWaitlist =
-      waitlistSummaries.length > 0
-        ? [...waitlistSummaries].sort(
-            (a, b) =>
-              b.netNewValue - a.netNewValue ||
-              b.totalRawValue - a.totalRawValue ||
-              b.totalGames - a.totalGames ||
-              a.lib.member.name.localeCompare(b.lib.member.name)
-          )[0]
-        : null;
-
-    const mostGenerousIdentity = mostGenerous
-      ? memberIdentityById.get(mostGenerous.memberId)
-      : undefined;
-    const targetLockedIdentity = targetLocked
-      ? memberIdentityById.get(targetLocked.memberId)
-      : undefined;
-
-    return [
-      {
-        id: "biggest-whale",
-        index: "AWARD 01",
-        title: "BIGGEST WHALE",
-        subtitle: "Highest Raw Catalog Value",
-        winnerName: biggestWhale?.name ?? "—",
-        winnerPersona:
-          biggestWhale && biggestWhale.personaName !== biggestWhale.name
-            ? biggestWhale.personaName
-            : undefined,
-        avatarUrl: biggestWhale?.avatarUrl ?? "",
-        statValue: biggestWhale
-          ? formatMoney(biggestWhale.totalRawValue, region)
-          : "—",
-        statLabel: biggestWhale
-          ? `${biggestWhale.sharePercent.toFixed(1)}% FAMILY SHARE`
-          : "NO ACTIVE MEMBERS",
-        accent: "crimson",
-        emptyMessage: biggestWhale ? undefined : "No active members",
-        icon: Crown,
-      },
-      {
-        id: "library-king",
-        index: "AWARD 02",
-        title: "LIBRARY KING",
-        subtitle: "Most Shareable Games",
-        winnerName: libraryKing?.name ?? "—",
-        winnerPersona:
-          libraryKing && libraryKing.personaName !== libraryKing.name
-            ? libraryKing.personaName
-            : undefined,
-        avatarUrl: libraryKing?.avatarUrl ?? "",
-        statValue: libraryKing
-          ? `${libraryKing.totalGames.toLocaleString()} GAMES`
-          : "—",
-        statLabel: libraryKing
-          ? `${libraryKing.sharedGames.toLocaleString()} SHARED · ${libraryKing.exclusiveGames.toLocaleString()} EXCL.`
-          : "NO ACTIVE MEMBERS",
-        emptyMessage: libraryKing ? undefined : "No active members",
-        icon: Library,
-      },
-      {
-        id: "exclusive-dealer",
-        index: "AWARD 03",
-        title: "EXCLUSIVE DEALER",
-        subtitle: "Most Unique-to-Family Titles",
-        winnerName: exclusiveDealer?.name ?? "—",
-        winnerPersona:
-          exclusiveDealer && exclusiveDealer.personaName !== exclusiveDealer.name
-            ? exclusiveDealer.personaName
-            : undefined,
-        avatarUrl: exclusiveDealer?.avatarUrl ?? "",
-        statValue: exclusiveDealer
-          ? `${exclusiveDealer.exclusiveGames.toLocaleString()} EXCL.`
-          : "—",
-        statLabel: exclusiveDealer
-          ? `${formatMoney(exclusiveDealer.exclusiveValue, region)} SOLO VALUE`
-          : "NO ACTIVE MEMBERS",
-        emptyMessage: exclusiveDealer ? undefined : "No active members",
-        icon: Gem,
-      },
-      {
-        id: "solo-carry",
-        index: "AWARD 04",
-        title: "SOLO CARRY",
-        subtitle: "Highest Exclusive-Only Value",
-        winnerName: soloCarry?.name ?? "—",
-        winnerPersona:
-          soloCarry && soloCarry.personaName !== soloCarry.name
-            ? soloCarry.personaName
-            : undefined,
-        avatarUrl: soloCarry?.avatarUrl ?? "",
-        statValue: soloCarry
-          ? formatMoney(soloCarry.exclusiveValue, region)
-          : "—",
-        statLabel: soloCarry
-          ? `${soloCarry.exclusiveGames.toLocaleString()} UNIQUE TITLES`
-          : "NO ACTIVE MEMBERS",
-        emptyMessage: soloCarry ? undefined : "No active members",
-        icon: Flame,
-      },
-      {
-        id: "high-roller",
-        index: "AWARD 05",
-        title: "HIGH ROLLER",
-        subtitle: "Highest Avg Price / Game",
-        winnerName: highRoller?.name ?? "—",
-        winnerPersona:
-          highRoller && highRoller.personaName !== highRoller.name
-            ? highRoller.personaName
-            : undefined,
-        avatarUrl: highRoller?.avatarUrl ?? "",
-        statValue: highRoller
-          ? `${formatMoney(highRoller.avgGameValue, region)}/GM`
-          : "—",
-        statLabel: highRoller
-          ? `${highRoller.totalGames.toLocaleString()} GAMES · ${formatMoney(highRoller.totalRawValue, region)}`
-          : "NO ACTIVE MEMBERS",
-        emptyMessage: highRoller ? undefined : "No active members",
-        icon: Sparkles,
-      },
-      {
-        id: "most-generous",
-        index: "AWARD 06",
-        title: "MOST GENEROUS",
-        subtitle: "Top Surplus Above Group Avg",
-        winnerName: mostGenerous?.name ?? "BALANCED",
-        winnerPersona:
-          mostGenerousIdentity &&
-          mostGenerous &&
-          mostGenerousIdentity.personaName !== mostGenerous.name
-            ? mostGenerousIdentity.personaName
-            : undefined,
-        avatarUrl: mostGenerousIdentity?.avatarUrl ?? "",
-        statValue: mostGenerous
-          ? formatSignedMoney(mostGenerous.deltaFromAverageValue, region)
-          : formatMoney(0, region),
-        statLabel: mostGenerous
-          ? `+${mostGenerous.deltaFromAveragePct.toFixed(1)}% VS AVG SHARE`
-          : "NO POSITIVE DELTA",
-        emptyMessage: mostGenerous ? undefined : "All members near average",
-        icon: HeartHandshake,
-      },
-      {
-        id: "target-locked",
-        index: "AWARD 07",
-        title: "TARGET LOCKED (UP NEXT)",
-        subtitle: "Most Behind Group Average",
-        winnerName:
-          targetLocked?.name ?? (members.length > 0 ? "BALANCED" : "—"),
-        winnerPersona:
-          targetLockedIdentity &&
-          targetLocked &&
-          targetLockedIdentity.personaName !== targetLocked.name
-            ? targetLockedIdentity.personaName
-            : undefined,
-        avatarUrl: targetLockedIdentity?.avatarUrl ?? "",
-        statValue: targetLocked
-          ? formatSignedMoney(targetLocked.deltaFromAverageValue, region)
-          : members.length > 0
-            ? formatMoney(0, region)
-            : "—",
-        statLabel: targetLocked
-          ? `${targetLocked.sharePercent.toFixed(1)}% OF ${targetLocked.expectedSharePercent.toFixed(1)}% TARGET`
-          : members.length > 0
-            ? "NO DEFICIT DETECTED"
-            : "NO ACTIVE MEMBERS",
-        accent: "crimson",
-        emptyMessage: targetLocked
-          ? undefined
-          : members.length > 0
-            ? "All members near average"
-            : "No active members",
-        icon: Crosshair,
-      },
-      {
-        id: "waitlist-challenger",
-        index: "AWARD 08",
-        title: "WAITLIST CHALLENGER",
-        subtitle: "Strongest Net-New Bench Pick",
-        winnerName: topWaitlist ? topWaitlist.lib.member.name : "No Waitlist",
-        winnerPersona:
-          topWaitlist &&
-          topWaitlist.lib.personaName !== topWaitlist.lib.member.name
-            ? topWaitlist.lib.personaName
-            : undefined,
-        avatarUrl: topWaitlist?.lib.avatarUrl ?? "",
-        statValue: topWaitlist
-          ? `+${formatMoney(topWaitlist.netNewValue, region)}`
-          : "0 CANDIDATES",
-        statLabel: topWaitlist
-          ? `+${topWaitlist.exclusiveGames.toLocaleString()} NEW · ${formatMoney(topWaitlist.totalRawValue, region)} TOTAL`
-          : "ADD WAITLIST TO COMPARE",
-        emptyMessage: topWaitlist ? undefined : "No Waitlist",
-        icon: Swords,
-      },
-    ];
-  }, [
-    analysis.members,
-    analysis.fairness.members,
-    rankings,
-    waitlistSummaries,
-    memberIdentityById,
-    region,
-  ]);
+  const displayedAchievements = useMemo(() => {
+    return achievements.filter((ach) => {
+      if (
+        achievementFilter !== "ALL" &&
+        ach.category !== achievementFilter
+      ) {
+        return false;
+      }
+      if (
+        selectedTrophyMemberId &&
+        ach.winner?.memberId !== selectedTrophyMemberId
+      ) {
+        return false;
+      }
+      return true;
+    });
+  }, [achievements, achievementFilter, selectedTrophyMemberId]);
 
   const maxPowerScore = rankings[0]?.powerScore ?? 0;
 
@@ -741,10 +498,10 @@ export function FamilyLeaderboard({
         </div>
       )}
 
-      {/* Section B: Family Hall of Fame Awards */}
+      {/* Section B: Trophy Cabinet & Achievement Showcase */}
       <div className="p5-frame bg-bt-border">
         <div className="bg-bt-surface">
-          {/* Header */}
+          {/* Header + Category Filter */}
           <div className="border-b border-bt-border bg-bt-elevated/70 px-5 py-4 flex flex-wrap items-center justify-between gap-3">
             <div className="flex items-center gap-3.5">
               <div className="w-1 h-9 bg-bt-red shrink-0" aria-hidden="true" />
@@ -755,10 +512,10 @@ export function FamilyLeaderboard({
                 />
                 <div>
                   <h2 className="font-condensed text-xl font-bold uppercase tracking-wider text-white leading-tight">
-                    Family Hall of Fame Awards
+                    Family Trophy Cabinet
                   </h2>
                   <p className="mt-0.5 font-mono text-[11px] uppercase tracking-[0.14em] text-bt-muted">
-                    Season honors &amp; standout telemetry{" "}
+                    Efficiency, playtime, squad &amp; volume honors{" "}
                     <span className="text-white">
                       [{regionConfig.code.toUpperCase()} · {regionConfig.symbol}]
                     </span>
@@ -767,120 +524,208 @@ export function FamilyLeaderboard({
               </div>
             </div>
 
-            <span className="p5-tag inline-flex items-center bg-bt-red px-3 py-1 text-white">
-              <span className="p5-unskew font-mono text-xs font-bold uppercase tracking-[0.14em] tabular-nums">
-                {awards.length} DISTINCTIONS
-              </span>
-            </span>
-          </div>
-
-          {/* 2x4 / 4-Col Award Grid */}
-          <div className="p-5 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
-            {awards.map((award) => {
-              const Icon = award.icon;
-              const isCrimson = award.accent === "crimson";
-              const isEmpty = Boolean(award.emptyMessage);
-
-              return (
-                <div
-                  key={award.id}
-                  className={`p5-frame-sm p5-frame-interactive ${
-                    isCrimson ? "bg-bt-red" : "bg-bt-border"
+            <div className="inline-flex flex-wrap border border-bt-border bg-bt-bg p-0.5 font-mono text-[10px] uppercase tracking-[0.14em]">
+              {(
+                [
+                  ["ALL", "All"],
+                  ["efficiency", "Skill / Rate"],
+                  ["playtime", "Playtime"],
+                  ["squad", "Squad"],
+                  ["volume", "Volume"],
+                ] as const
+              ).map(([key, label]) => (
+                <button
+                  key={key}
+                  type="button"
+                  onClick={() => setAchievementFilter(key)}
+                  className={`cursor-pointer px-2.5 py-1 transition-colors ${
+                    achievementFilter === key
+                      ? "bg-bt-red text-white font-bold"
+                      : "text-bt-muted hover:text-white"
                   }`}
                 >
-                  <div
-                    className={`p-5 h-full flex flex-col justify-between gap-4 ${
-                      isCrimson
-                        ? "bg-gradient-to-br from-bt-red/15 via-bt-surface to-bt-surface"
-                        : "bg-bt-elevated/55"
-                    }`}
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Member Trophy Rack (click a member to filter their trophies) */}
+          {trophyCounts.length > 0 && (
+            <div className="border-b border-bt-border bg-bt-bg/60 px-5 py-4 space-y-2.5">
+              <div className="flex items-center justify-between gap-2 font-mono text-[10px] uppercase tracking-[0.16em] text-bt-muted">
+                <span>TROPHY STANDINGS // CLICK A MEMBER TO FILTER</span>
+                {selectedTrophyMemberId && (
+                  <button
+                    type="button"
+                    onClick={() => setSelectedTrophyMemberId(null)}
+                    className="cursor-pointer text-bt-red hover:underline font-bold"
                   >
-                    {/* Card Top Meta */}
-                    <div className="space-y-2.5">
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-bt-muted">
-                          {award.index} {"//"} {award.subtitle}
-                        </span>
-                        <Icon
-                          className={`h-4 w-4 shrink-0 ${
-                            isCrimson ? "text-bt-red" : "text-white/80"
-                          }`}
-                          aria-hidden="true"
-                        />
-                      </div>
+                    CLEAR FILTER
+                  </button>
+                )}
+              </div>
 
-                      <div>
-                        <span
-                          className={`p5-tag inline-flex items-center px-2.5 py-0.5 ${
-                            isCrimson
-                              ? "bg-bt-red text-white"
-                              : "bg-bt-bg border border-bt-border text-white"
-                          }`}
-                        >
-                          <span className="p5-unskew font-mono text-[10px] font-bold uppercase tracking-[0.16em]">
-                            {award.title}
-                          </span>
-                        </span>
-                      </div>
-                    </div>
-
-                    {/* Winner Identity */}
-                    <div className="flex items-center gap-3.5">
-                      {isEmpty && award.id === "waitlist-challenger" ? (
-                        <div className="h-12 w-12 shrink-0 border border-bt-border bg-bt-bg flex items-center justify-center text-bt-dim">
-                          <UserX className="h-5 w-5" aria-hidden="true" />
-                        </div>
-                      ) : (
-                        <MemberAvatar
-                          avatarUrl={award.avatarUrl}
-                          name={award.winnerName}
-                          highlighted={isCrimson && !isEmpty}
-                          size="md"
-                        />
-                      )}
-
-                      <div className="min-w-0 flex-1">
-                        <div
-                          className={`font-display text-2xl leading-none tracking-wide truncate ${
-                            isEmpty ? "text-bt-muted" : "text-white"
-                          }`}
-                          title={award.winnerName}
-                        >
-                          {award.winnerName}
-                        </div>
-                        <div className="mt-1 font-mono text-[11px] text-bt-muted truncate">
-                          {award.emptyMessage
-                            ? award.emptyMessage
-                            : award.winnerPersona ?? "Steam Family Contender"}
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Winning Stat Footer */}
-                    <div
-                      className={`border-t pt-2.5 flex items-baseline justify-between gap-2 font-mono tabular-nums ${
-                        isCrimson ? "border-bt-red/30" : "border-bt-border/80"
+              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-2.5">
+                {trophyCounts.map((member) => {
+                  const isSelected = selectedTrophyMemberId === member.memberId;
+                  return (
+                    <button
+                      key={`rack-${member.role}-${member.memberId}`}
+                      type="button"
+                      onClick={() =>
+                        setSelectedTrophyMemberId((prev) =>
+                          prev === member.memberId ? null : member.memberId
+                        )
+                      }
+                      className={`cursor-pointer text-left border px-3 py-2.5 flex items-center justify-between gap-3 transition-colors ${
+                        isSelected
+                          ? "border-bt-red bg-bt-red/15"
+                          : "border-bt-border bg-bt-surface hover:border-bt-red/60"
                       }`}
                     >
-                      <span
-                        className={`text-sm font-bold ${
-                          isEmpty
-                            ? "text-bt-muted"
-                            : isCrimson
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        <MemberAvatar
+                          avatarUrl={member.avatarUrl}
+                          name={member.name}
+                          highlighted={member.trophies.length > 0}
+                          size="sm"
+                        />
+                        <div className="min-w-0">
+                          <div className="font-condensed text-sm font-bold uppercase tracking-wide text-white truncate">
+                            {member.name}
+                          </div>
+                          <div className="mt-0.5 flex flex-wrap gap-1">
+                            {member.trophies.length > 0 ? (
+                              member.trophies.map((t) => (
+                                <span
+                                  key={t.id}
+                                  className={`border px-1.5 py-0 font-mono text-[9px] font-bold uppercase tracking-wider ${BADGE_TONE_STYLES[t.accent]}`}
+                                >
+                                  {t.title}
+                                </span>
+                              ))
+                            ) : (
+                              <span className="font-mono text-[10px] text-bt-dim">
+                                Hunting first trophy
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="shrink-0 text-right font-mono tabular-nums">
+                        <span
+                          className={`font-display text-2xl leading-none ${
+                            member.trophies.length > 0
                               ? "text-bt-red"
-                              : "text-white"
+                              : "text-bt-dim"
+                          }`}
+                        >
+                          {member.trophies.length}
+                        </span>
+                        <div className="text-[9px] uppercase tracking-wider text-bt-muted">
+                          {member.trophies.length === 1 ? "TROPHY" : "TROPHIES"}
+                        </div>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Compact Trophy Shelf (Winner + Runner-Up) */}
+          <div className="p-5 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3.5">
+            {displayedAchievements.length === 0 ? (
+              <div className="col-span-full font-mono text-xs text-bt-muted py-4">
+                No trophies match the selected filter.
+              </div>
+            ) : (
+              displayedAchievements.map((ach) => {
+                const Icon = ACHIEVEMENT_ICONS[ach.id] ?? Trophy;
+                const tone = ach.accent ?? "crimson";
+                const isHighlight = tone === "crimson";
+
+                return (
+                  <div
+                    key={ach.id}
+                    className={`border p-4 flex flex-col justify-between gap-3 transition-colors ${
+                      isHighlight
+                        ? "border-bt-red/50 bg-gradient-to-br from-bt-red/10 via-bt-surface to-bt-surface"
+                        : "border-bt-border bg-bt-elevated/45"
+                    }`}
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div>
+                        <span
+                          className={`inline-flex items-center border px-2 py-0.5 font-mono text-[10px] font-bold uppercase tracking-[0.14em] ${BADGE_TONE_STYLES[tone]}`}
+                        >
+                          {ach.title}
+                        </span>
+                        <div className="mt-1 font-mono text-[10px] uppercase tracking-[0.14em] text-bt-muted">
+                          {ach.subtitle}
+                        </div>
+                      </div>
+                      <Icon
+                        className={`h-4 w-4 shrink-0 ${
+                          isHighlight ? "text-bt-red" : "text-white/75"
                         }`}
-                      >
-                        {award.statValue}
-                      </span>
-                      <span className="text-[10px] uppercase tracking-[0.14em] text-bt-muted text-right truncate">
-                        {award.statLabel}
-                      </span>
+                        aria-hidden="true"
+                      />
                     </div>
+
+                    {ach.winner ? (
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="flex items-center gap-2.5 min-w-0">
+                          <MemberAvatar
+                            avatarUrl={ach.winner.avatarUrl}
+                            name={ach.winner.name}
+                            highlighted={isHighlight}
+                            size="sm"
+                          />
+                          <div className="min-w-0">
+                            <div className="font-condensed text-base font-bold uppercase tracking-wide text-white truncate">
+                              {ach.winner.name}
+                            </div>
+                            {ach.winner.subText && (
+                              <div className="font-mono text-[10px] text-bt-muted truncate max-w-[180px]">
+                                {ach.winner.subText}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+
+                        <div className="shrink-0 text-right font-mono tabular-nums">
+                          <div
+                            className={`text-sm font-bold ${
+                              isHighlight ? "text-bt-red" : "text-white"
+                            }`}
+                          >
+                            {ach.winner.statText}
+                          </div>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="font-mono text-xs text-bt-dim">
+                        No qualifying member yet
+                      </div>
+                    )}
+
+                    {ach.runnerUp && (
+                      <div className="border-t border-bt-border/60 pt-2 flex items-center justify-between gap-2 font-mono text-[10px] text-bt-muted">
+                        <span className="truncate">
+                          2nd: <span className="text-white/80">{ach.runnerUp.name}</span>
+                        </span>
+                        <span className="shrink-0 tabular-nums text-white/75 truncate max-w-[160px]">
+                          {ach.runnerUp.statText}
+                        </span>
+                      </div>
+                    )}
                   </div>
-                </div>
-              );
-            })}
+                );
+              })
+            )}
           </div>
         </div>
       </div>

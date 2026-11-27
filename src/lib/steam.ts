@@ -189,6 +189,25 @@ interface RawOwnedGame {
   appid: number;
   name?: string;
   img_icon_url?: string;
+  playtime_forever?: number;
+}
+
+export async function fetchSteamLevel(
+  steamId64: string,
+  apiKey: string
+): Promise<number | null> {
+  try {
+    const url = `https://api.steampowered.com/IPlayerService/GetSteamLevel/v1/?key=${encodeURIComponent(
+      apiKey
+    )}&steamid=${encodeURIComponent(steamId64)}`;
+    const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
+    if (!res.ok) return null;
+    const data = await res.json();
+    const level = data?.response?.player_level;
+    return typeof level === "number" && Number.isFinite(level) ? level : null;
+  } catch {
+    return null;
+  }
 }
 
 async function fetchOwnedGames(
@@ -601,6 +620,7 @@ export async function fetchMemberLibrariesLive(
           isFree: details?.isFree ?? false,
           familySharingExcluded: excluded,
           headerImage: `https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/${g.appid}/header.jpg`,
+          playtimeMinutes: Math.max(0, Math.round(Number(g.playtime_forever) || 0)),
         };
       });
 
@@ -617,4 +637,118 @@ export async function fetchMemberLibrariesLive(
   );
 
   return { libraries, warnings };
+}
+
+export interface SteamProfileFlexGame {
+  appid: number;
+  name: string;
+  rawPrice: number;
+  isFree: boolean;
+  familySharingExcluded: boolean;
+  playtimeHours: number;
+  headerImage: string;
+}
+
+export interface SteamProfileFlexData {
+  steamId64: string;
+  personaName: string;
+  avatarUrl: string;
+  profileUrl: string;
+  steamLevel: number | null;
+  region: SteamRegion;
+  totalGames: number;
+  shareableGames: number;
+  excludedGames: number;
+  totalRawValue: number;
+  shareableRawValue: number;
+  avgGameValue: number;
+  totalPlaytimeHours: number;
+  topValueGames: SteamProfileFlexGame[];
+  topPlayedGames: SteamProfileFlexGame[];
+}
+
+export async function fetchSteamProfileFlex(
+  input: string,
+  region: SteamRegion,
+  apiKey: string
+): Promise<SteamProfileFlexData> {
+  const trimmed = input.trim();
+  if (!trimmed) {
+    throw new Error("Steam profile URL, vanity name, or SteamID64 is required");
+  }
+
+  const steamId64 = await resolveSteamId64(trimmed, apiKey);
+  const [steamLevel, { libraries, warnings }] = await Promise.all([
+    fetchSteamLevel(steamId64, apiKey),
+    fetchMemberLibrariesLive(
+      [{ id: "profile", name: trimmed, steamUrlOrId: steamId64 }],
+      region,
+      apiKey
+    ),
+  ]);
+
+  const lib = libraries[0];
+  if (!lib) {
+    throw new Error(
+      warnings[0]?.reason ||
+        `Could not load Steam library for ${steamId64}. Ensure Game details are Public.`
+    );
+  }
+
+  let totalRawValue = 0;
+  let shareableRawValue = 0;
+  let shareableGames = 0;
+  let totalMinutes = 0;
+
+  const mapped: SteamProfileFlexGame[] = lib.games.map((g) => {
+    const mins = g.playtimeMinutes ?? 0;
+    totalMinutes += mins;
+    totalRawValue += g.rawPrice;
+    if (!g.familySharingExcluded) {
+      shareableGames += 1;
+      shareableRawValue += g.rawPrice;
+    }
+    return {
+      appid: g.appid,
+      name: g.name,
+      rawPrice: Math.round(g.rawPrice * 100) / 100,
+      isFree: g.isFree,
+      familySharingExcluded: g.familySharingExcluded,
+      playtimeHours: Math.round((mins / 60) * 10) / 10,
+      headerImage: g.headerImage,
+    };
+  });
+
+  const topValueGames = [...mapped]
+    .filter((g) => !g.isFree && g.rawPrice > 0)
+    .sort((a, b) => b.rawPrice - a.rawPrice || b.playtimeHours - a.playtimeHours)
+    .slice(0, 5);
+
+  const topPlayedGames = [...mapped]
+    .filter((g) => g.playtimeHours > 0)
+    .sort((a, b) => b.playtimeHours - a.playtimeHours || b.rawPrice - a.rawPrice)
+    .slice(0, 5);
+
+  const totalGames = lib.games.length;
+  const roundedTotal = Math.round(totalRawValue * 100) / 100;
+  const roundedShareable = Math.round(shareableRawValue * 100) / 100;
+
+  return {
+    steamId64: lib.steamId64,
+    personaName: lib.personaName,
+    avatarUrl: lib.avatarUrl,
+    profileUrl: lib.profileUrl,
+    steamLevel,
+    region,
+    totalGames,
+    shareableGames,
+    excludedGames: lib.excludedCount,
+    totalRawValue: roundedTotal,
+    shareableRawValue: roundedShareable,
+    avgGameValue:
+      totalGames > 0 ? Math.round((roundedTotal / totalGames) * 100) / 100 : 0,
+    totalPlaytimeHours: Math.round((totalMinutes / 60) * 10) / 10,
+    topValueGames,
+    topPlayedGames,
+  };
 }

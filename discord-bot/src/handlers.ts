@@ -384,6 +384,11 @@ export async function handleInteraction(
     return;
   }
 
+  if (interaction.commandName === "profile") {
+    await handleProfile(interaction);
+    return;
+  }
+
   if (interaction.commandName === "family") {
     const sub = interaction.options.getSubcommand();
     if (sub === "board") {
@@ -977,4 +982,185 @@ async function handleKos(
     embed.setThumbnail(target.avatarUrl);
   }
   await interaction.editReply({ embeds: [embed] });
+}
+
+interface SteamProfileApiResponse {
+  profile?: {
+    steamId64: string;
+    personaName: string;
+    avatarUrl: string;
+    profileUrl: string;
+    steamLevel: number | null;
+    region: string;
+    totalGames: number;
+    shareableGames: number;
+    excludedGames: number;
+    totalRawValue: number;
+    shareableRawValue: number;
+    avgGameValue: number;
+    totalPlaytimeHours: number;
+    topValueGames: Array<{ name: string; rawPrice: number; playtimeHours: number }>;
+    topPlayedGames: Array<{ name: string; rawPrice: number; playtimeHours: number }>;
+  };
+  currencySymbol?: string;
+  error?: string;
+}
+
+async function handleProfile(
+  interaction: ChatInputCommandInteraction
+): Promise<void> {
+  await interaction.deferReply();
+
+  const targetUser = interaction.options.getUser("user");
+  const explicitSteam = interaction.options.getString("steam")?.trim() || null;
+  let region = interaction.options.getString("region")?.trim() || null;
+
+  let steamQuery: string | null = explicitSteam;
+  const db = getSupabaseClient();
+
+  if (!steamQuery) {
+    const lookupDiscordId = targetUser?.id ?? interaction.user.id;
+    if (!db) {
+      await interaction.editReply(
+        "Supabase is not configured on this bot. Pass a `steam` profile URL/SteamID64 directly."
+      );
+      return;
+    }
+
+    const { data: linkRow } = await db
+      .from("discord_links")
+      .select("steam_id64, steam_input")
+      .eq("discord_user_id", lookupDiscordId)
+      .maybeSingle();
+
+    steamQuery =
+      (linkRow?.steam_id64 ? String(linkRow.steam_id64) : null) ||
+      (linkRow?.steam_input ? String(linkRow.steam_input) : null);
+
+    if (!steamQuery) {
+      await interaction.editReply(
+        targetUser && targetUser.id !== interaction.user.id
+          ? `**${targetUser.username}** hasn't linked their Steam account yet. They can run \`/link\` or you can pass the \`steam\` option directly.`
+          : "Link your Steam account first with `/link`, or pass a Steam URL / vanity name in the `steam` option."
+      );
+      return;
+    }
+
+    if (!region && linkRow?.steam_id64) {
+      const { data: prefRow } = await db
+        .from("steam_preferences")
+        .select("preferred_region")
+        .eq("steam_id64", String(linkRow.steam_id64))
+        .maybeSingle();
+      if (
+        typeof prefRow?.preferred_region === "string" &&
+        prefRow.preferred_region in STEAM_REGIONS
+      ) {
+        region = prefRow.preferred_region;
+      }
+    }
+  }
+
+  const effectiveRegion =
+    region && region in STEAM_REGIONS ? region : "ma";
+
+  const apiBase = getApiBaseUrl();
+  const profileUrl = new URL(`${apiBase}/api/steam/profile`);
+  profileUrl.searchParams.set("query", steamQuery);
+  profileUrl.searchParams.set("region", effectiveRegion);
+
+  let apiData: SteamProfileApiResponse;
+  try {
+    const res = await fetch(profileUrl.toString(), {
+      signal: AbortSignal.timeout(20000),
+    });
+    apiData = (await res.json()) as SteamProfileApiResponse;
+    if (!res.ok || !apiData.profile) {
+      await interaction.editReply(
+        apiData.error || `Could not load Steam profile (${res.status}).`
+      );
+      return;
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : "Network error";
+    await interaction.editReply(`Failed to reach SteamFamTrack API: ${msg}`);
+    return;
+  }
+
+  const p = apiData.profile;
+  const sym = apiData.currencySymbol || "$";
+  const levelLabel = p.steamLevel !== null ? ` · LVL ${p.steamLevel}` : "";
+
+  const embed = new EmbedBuilder()
+    .setColor(EMBED_COLOR)
+    .setTitle(`🎮 ${p.personaName}${levelLabel}`)
+    .setURL(p.profileUrl)
+    .setDescription(
+      `**${formatMoney(p.totalRawValue, sym)}** raw catalog value · **${p.shareableGames}/${p.totalGames}** shareable games · **${p.totalPlaytimeHours.toLocaleString()}h** played`
+    )
+    .setFooter({
+      text: `steamft.com · ${effectiveRegion.toUpperCase()} · Avg ${formatMoney(p.avgGameValue, sym)}/game`,
+    })
+    .setTimestamp();
+
+  const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder()
+      .setLabel("Steam Profile")
+      .setStyle(ButtonStyle.Link)
+      .setURL(p.profileUrl),
+    new ButtonBuilder()
+      .setLabel("Open SteamFT")
+      .setStyle(ButtonStyle.Link)
+      .setURL("https://steamft.com")
+  );
+
+  const ogUrl = new URL(`${apiBase}/api/og/profile`);
+  ogUrl.searchParams.set("query", p.steamId64);
+  ogUrl.searchParams.set("region", effectiveRegion);
+
+  try {
+    const imgRes = await fetch(ogUrl.toString(), {
+      signal: AbortSignal.timeout(18000),
+    });
+    if (imgRes.ok) {
+      const buf = Buffer.from(await imgRes.arrayBuffer());
+      const attachment = new AttachmentBuilder(buf, {
+        name: "steam-profile.png",
+      });
+      embed.setImage("attachment://steam-profile.png");
+      await interaction.editReply({
+        embeds: [embed],
+        files: [attachment],
+        components: [row],
+      });
+      return;
+    }
+  } catch (err) {
+    console.error("Failed to fetch /api/og/profile image:", err);
+  }
+
+  // Fallback text table if image render fails
+  if (p.avatarUrl) embed.setThumbnail(p.avatarUrl);
+  if (p.topValueGames.length > 0) {
+    embed.addFields({
+      name: "Top Valuable Games",
+      value: p.topValueGames
+        .slice(0, 5)
+        .map((g, i) => `${i + 1}. **${g.name}** — ${formatMoney(g.rawPrice, sym)}`)
+        .join("\n"),
+      inline: true,
+    });
+  }
+  if (p.topPlayedGames.length > 0) {
+    embed.addFields({
+      name: "Most Played Games",
+      value: p.topPlayedGames
+        .slice(0, 5)
+        .map((g, i) => `${i + 1}. **${g.name}** — ${g.playtimeHours}h`)
+        .join("\n"),
+      inline: true,
+    });
+  }
+
+  await interaction.editReply({ embeds: [embed], components: [row] });
 }

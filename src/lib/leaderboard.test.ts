@@ -7,6 +7,7 @@ const { analyzeFamily } = (await import(
 )) as typeof import("./analyzer");
 const {
   assignTierGrade,
+  buildFamilyAchievements,
   buildPowerRankings,
   computePowerBreakdown,
   computePowerScore,
@@ -146,5 +147,16 @@ describe("summarizeWaitlistLibrary & buildPowerRankings", () => {
 
     const byAvgAsc = sortPowerRankings(rankings, "avgGameValue", "asc");
     assert.equal(byAvgAsc[0]?.memberId, "a1");
+
+    const { achievements, trophyCounts } = buildFamilyAchievements(
+      analysis,
+      [a1, a2],
+      [],
+      rankings,
+      (v) => `$${v.toFixed(2)}`
+    );
+    assert.ok(achievements.some((a) => a.id === "crown-jewel" && a.winner?.memberId === "a2"));
+    assert.ok(achievements.some((a) => a.id === "purist"));
+    assert.ok(trophyCounts.length === 2);
   });
 });

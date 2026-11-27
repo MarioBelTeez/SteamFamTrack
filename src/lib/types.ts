@@ -24,6 +24,8 @@ export interface GameInfo {
   isFree: boolean;
   familySharingExcluded: boolean;
   headerImage: string;
+  /** Total lifetime playtime in minutes from Steam GetOwnedGames */
+  playtimeMinutes?: number;
 }
 
 export interface FamilyMemberInput {

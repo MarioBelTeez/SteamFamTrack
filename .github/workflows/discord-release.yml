@@ -1,0 +1,46 @@
+name: Discord Release Announcement
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  announce:
+    runs-on: ubuntu-latest
+    if: ${{ secrets.DISCORD_UPDATES_WEBHOOK != '' }}
+    steps:
+      - name: Post release notes to #steamft-updates
+        env:
+          WEBHOOK_URL: ${{ secrets.DISCORD_UPDATES_WEBHOOK }}
+          TAG_NAME: ${{ github.event.release.tag_name }}
+          RELEASE_NAME: ${{ github.event.release.name }}
+          RELEASE_URL: ${{ github.event.release.html_url }}
+          RELEASE_BODY: ${{ github.event.release.body }}
+        run: |
+          node -e '
+            const body = (process.env.RELEASE_BODY || "").trim().slice(0, 3800);
+            const title = process.env.RELEASE_NAME || `SteamFamTrack ${process.env.TAG_NAME}`;
+            const payload = {
+              embeds: [
+                {
+                  title: `🚀 ${title}`,
+                  url: process.env.RELEASE_URL,
+                  color: 0xe8002d,
+                  description: body || "New SteamFamTrack release is now live on https://steamft.com",
+                  footer: { text: `steamft.com · ${process.env.TAG_NAME} · BelTeez Studio` },
+                  timestamp: new Date().toISOString(),
+                },
+              ],
+            };
+            fetch(process.env.WEBHOOK_URL, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(payload),
+            }).then(async (r) => {
+              if (!r.ok) {
+                console.error("Discord webhook failed:", r.status, await r.text());
+                process.exit(1);
+              }
+              console.log("Announced", process.env.TAG_NAME, "to Discord");
+            });
+          '

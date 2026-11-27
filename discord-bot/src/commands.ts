@@ -119,6 +119,40 @@ export const commands = [
         .setDescription("Optional family name (auto-detects your linked Steam Family if omitted)")
         .setRequired(false)
     ),
+
+  new SlashCommandBuilder()
+    .setName("profile")
+    .setDescription(
+      "Flex a Steam profile card with level, catalog value, playtime, and top games"
+    )
+    .setIntegrationTypes(integrationTypes)
+    .setContexts(contexts)
+    .addUserOption((opt) =>
+      opt
+        .setName("user")
+        .setDescription("Discord user whose linked Steam profile you want to inspect")
+        .setRequired(false)
+    )
+    .addStringOption((opt) =>
+      opt
+        .setName("steam")
+        .setDescription("Optional Steam profile URL, vanity name, or SteamID64")
+        .setRequired(false)
+    )
+    .addStringOption((opt) =>
+      opt
+        .setName("region")
+        .setDescription("Pricing region (defaults to your saved preference)")
+        .setRequired(false)
+        .addChoices(
+          { name: "MENA-USD (ma)", value: "ma" },
+          { name: "United States (us)", value: "us" },
+          { name: "Europe (eu)", value: "eu" },
+          { name: "United Kingdom (gb)", value: "gb" },
+          { name: "Brazil (br)", value: "br" },
+          { name: "Japan (jp)", value: "jp" }
+        )
+    ),
 ];
 
 export const commandsJson = commands.map((cmd) => cmd.toJSON());
